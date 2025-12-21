@@ -141,4 +141,124 @@ impl Storage for FileStorage {
         }
         Ok(count)
     }
+
+    async fn save_pending_message(&self, message: &Message) -> Result<()> {
+        let pending_dir = self.base_path.join("pending");
+        if !pending_dir.exists() {
+            fs::create_dir_all(&pending_dir).await.map_err(XPushError::IoError)?;
+        }
+
+        let device_dir = pending_dir.join(message.recipient.to_string());
+        if !device_dir.exists() {
+            fs::create_dir_all(&device_dir).await.map_err(XPushError::IoError)?;
+        }
+
+        let path = device_dir.join(format!("{}.json", message.id));
+        let content = serde_json::to_vec(message).map_err(XPushError::SerializationError)?;
+        fs::write(path, content).await.map_err(XPushError::IoError)?;
+        Ok(())
+    }
+
+    async fn get_pending_messages_for_recovery(&self, device_id: &DeviceId) -> Result<Vec<Message>> {
+        let pending_dir = self.base_path.join("pending").join(device_id.to_string());
+        if !pending_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut messages = Vec::new();
+        let mut entries = fs::read_dir(pending_dir).await.map_err(XPushError::IoError)?;
+
+        while let Some(entry) = entries.next_entry().await.map_err(XPushError::IoError)? {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                let content = fs::read(path).await.map_err(XPushError::IoError)?;
+                let message: Message = serde_json::from_slice(&content)
+                    .map_err(XPushError::SerializationError)?;
+                messages.push(message);
+            }
+        }
+
+        Ok(messages)
+    }
+
+    async fn remove_pending_message(&self, message_id: &uuid::Uuid) -> Result<()> {
+        let pending_dir = self.base_path.join("pending");
+        if !pending_dir.exists() {
+            return Ok(());
+        }
+
+        let mut entries = fs::read_dir(&pending_dir).await.map_err(XPushError::IoError)?;
+        while let Some(device_entry) = entries.next_entry().await.map_err(XPushError::IoError)? {
+            if device_entry.path().is_dir() {
+                let mut msg_entries = fs::read_dir(device_entry.path()).await.map_err(XPushError::IoError)?;
+                while let Some(msg_entry) = msg_entries.next_entry().await.map_err(XPushError::IoError)? {
+                    let path = msg_entry.path();
+                    if path.file_name().and_then(|s| s.to_str()) == Some(&format!("{}.json", message_id)) {
+                        fs::remove_file(path).await.map_err(XPushError::IoError)?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn get_storage_usage(&self) -> Result<u64> {
+        let mut total_size = 0u64;
+        let mut stack = vec![self.base_path.clone()];
+        
+        while let Some(dir) = stack.pop() {
+            let mut entries = fs::read_dir(dir).await.map_err(XPushError::IoError)?;
+            while let Some(entry) = entries.next_entry().await.map_err(XPushError::IoError)? {
+                let metadata = entry.metadata().await.map_err(XPushError::IoError)?;
+                if metadata.is_file() {
+                    total_size += metadata.len();
+                } else if metadata.is_dir() {
+                    stack.push(entry.path());
+                }
+            }
+        }
+        
+        Ok(total_size)
+    }
+
+    async fn cleanup_storage(&self, target_size_bytes: u64) -> Result<u64> {
+        let current_size = self.get_storage_usage().await?;
+        if current_size <= target_size_bytes {
+            return Ok(0);
+        }
+
+        let mut removed_size = 0u64;
+        let mut files_to_remove = Vec::new();
+        
+        // 收集所有文件及其修改时间
+        let mut stack = vec![self.base_path.clone()];
+        while let Some(dir) = stack.pop() {
+            let mut entries = fs::read_dir(dir).await.map_err(XPushError::IoError)?;
+            while let Some(entry) = entries.next_entry().await.map_err(XPushError::IoError)? {
+                let metadata = entry.metadata().await.map_err(XPushError::IoError)?;
+                if metadata.is_file() {
+                    let modified = metadata.modified().map_err(XPushError::IoError)?;
+                    files_to_remove.push((entry.path(), modified, metadata.len()));
+                } else if metadata.is_dir() {
+                    stack.push(entry.path());
+                }
+            }
+        }
+        
+        // 按修改时间排序（最旧的优先删除）
+        files_to_remove.sort_by_key(|(_, modified, _)| *modified);
+        
+        // 删除文件直到达到目标大小
+        for (path, _, size) in files_to_remove {
+            if current_size - removed_size <= target_size_bytes {
+                break;
+            }
+            
+            fs::remove_file(&path).await.map_err(XPushError::IoError)?;
+            removed_size += size;
+        }
+        
+        Ok(removed_size)
+    }
 }

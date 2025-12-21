@@ -29,6 +29,15 @@ pub trait Storage: Send + Sync {
     
     // 数据清理支持
     async fn cleanup_old_data(&self, days: u32) -> Result<u64>;
+    
+    // 消息队列持久化支持（用于设备崩溃恢复）
+    async fn save_pending_message(&self, message: &Message) -> Result<()>;
+    async fn get_pending_messages_for_recovery(&self, device_id: &DeviceId) -> Result<Vec<Message>>;
+    async fn remove_pending_message(&self, message_id: &uuid::Uuid) -> Result<()>;
+    
+    // 存储空间管理
+    async fn get_storage_usage(&self) -> Result<u64>;
+    async fn cleanup_storage(&self, target_size_bytes: u64) -> Result<u64>;
 }
 
 #[async_trait]

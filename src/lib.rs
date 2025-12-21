@@ -189,6 +189,12 @@ impl UnifiedPushSDK {
     pub async fn start(&self) -> Result<()> {
         log::info!("Starting UnifiedPush SDK for device {}", self.device_id);
         
+        // 启动时进行崩溃恢复
+        match self.recover_from_crash().await {
+            Ok(_) => log::info!("Crash recovery completed successfully"),
+            Err(e) => log::error!("Crash recovery failed: {}", e),
+        }
+        
         // 启动后台服务
         self.heartbeat_manager.lock().await.start();
         self.discovery_manager.lock().await.start_discovery();
@@ -298,10 +304,21 @@ impl UnifiedPushSDK {
                 log::info!("Message sent successfully");
                 self.metrics.record_send(channel.channel_type(), 0); // 暂时记为0字节，后续可完善
                 self.storage.remove_message(&message.id).await?;
+                
+                // 发送成功，也从待发送队列中移除（如果存在）
+                let _ = self.storage.remove_pending_message(&message.id).await;
                 Ok(())
             }
             Err(e) => {
                 log::error!("Failed to send message: {}", e);
+                
+                // 发送失败，保存到待发送队列用于崩溃恢复
+                if let Err(save_err) = self.storage.save_pending_message(&message).await {
+                    log::error!("Failed to save pending message for recovery: {}", save_err);
+                } else {
+                    log::info!("Saved message {} to pending queue for recovery", message.id);
+                }
+                
                 Err(e)
             }
         }
@@ -446,6 +463,90 @@ impl UnifiedPushSDK {
             plugin.on_unload()?;
             log::info!("Plugin unloaded: {}", name);
         }
+        Ok(())
+    }
+    
+    // --- 设备崩溃恢复和电量耗尽处理 ---
+    
+    /// 保存待发送消息到持久化队列（用于设备崩溃恢复）
+    pub async fn save_pending_message(&self, recipient: DeviceId, payload: MessagePayload) -> Result<()> {
+        let message = Message::new(self.device_id, recipient, payload);
+        self.storage.save_pending_message(&message).await?;
+        log::info!("Saved pending message {} for recovery", message.id);
+        Ok(())
+    }
+    
+    /// 恢复设备崩溃后的待发送消息
+    pub async fn recover_pending_messages(&self) -> Result<Vec<Message>> {
+        let messages = self.storage.get_pending_messages_for_recovery(&self.device_id).await?;
+        log::info!("Recovered {} pending messages after crash", messages.len());
+        Ok(messages)
+    }
+    
+    /// 获取存储使用情况（用于存储空间管理）
+    pub async fn get_storage_usage(&self) -> Result<u64> {
+        self.storage.get_storage_usage().await
+    }
+    
+    /// 清理存储空间到指定大小
+    pub async fn cleanup_storage(&self, target_size_bytes: u64) -> Result<u64> {
+        let removed = self.storage.cleanup_storage(target_size_bytes).await?;
+        log::info!("Cleaned up {} bytes of storage", removed);
+        Ok(removed)
+    }
+    
+    /// 处理电量耗尽场景：保存关键消息并优雅关闭
+    pub async fn handle_low_battery_shutdown(&self) -> Result<()> {
+        log::warn!("Low battery detected, performing graceful shutdown");
+        
+        // 1. 保存所有待发送消息
+        let pending_messages = self.recover_pending_messages().await?;
+        log::info!("Saved {} pending messages before shutdown", pending_messages.len());
+        
+        // 2. 记录审计日志
+        self.storage.save_audit_log("Low battery shutdown initiated".to_string()).await?;
+        
+        // 3. 导出SDK状态用于恢复
+        let state_data = self.export_sdk_state()?;
+        log::info!("Exported SDK state ({} bytes) for recovery", state_data.len());
+        
+        // 4. 清理非关键数据以节省电量
+        let _ = self.cleanup_storage(1024 * 1024).await; // 保留1MB
+        
+        Ok(())
+    }
+    
+    /// 设备启动后恢复状态
+    pub async fn recover_from_crash(&self) -> Result<()> {
+        log::info!("Starting crash recovery process");
+        
+        // 1. 恢复待发送消息
+        let pending_messages = self.recover_pending_messages().await?;
+        let total_messages = pending_messages.len();
+        log::info!("Found {} messages to retry after crash", total_messages);
+        
+        // 2. 尝试重新发送这些消息
+        let mut failed_count = 0;
+        for message in pending_messages {
+            match self.send(message.recipient, message.payload.clone()).await {
+                Ok(_) => {
+                    // 发送成功，从待发送队列中移除
+                    self.storage.remove_pending_message(&message.id).await?;
+                    log::info!("Successfully resent message {} after crash", message.id);
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    log::error!("Failed to resend message {} after crash: {}", message.id, e);
+                }
+            }
+        }
+        
+        log::info!("Crash recovery completed: {} messages resent, {} failed", 
+                   total_messages - failed_count, failed_count);
+        
+        // 3. 记录恢复完成
+        self.storage.save_audit_log(format!("Crash recovery completed: {} messages processed", total_messages)).await?;
+        
         Ok(())
     }
 }

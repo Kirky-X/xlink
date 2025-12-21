@@ -141,11 +141,9 @@ impl Channel for RemoteChannel {
                                 current_server, message.id, status, error_text);
                             
                             // 尝试切换到下一个服务器
-                            if attempts < max_attempts - 1 {
-                                if self.switch_to_next_server().await {
-                                    attempts += 1;
-                                    continue;
-                                }
+                            if attempts < max_attempts - 1 && self.switch_to_next_server().await {
+                                attempts += 1;
+                                continue;
                             }
                             
                             return Err(XPushError::ChannelError(format!("ntfy request failed: {} - {}", status, error_text)));
@@ -156,11 +154,9 @@ impl Channel for RemoteChannel {
                             message.id, current_server, e);
                         
                         // 网络错误，尝试切换到下一个服务器
-                        if attempts < max_attempts - 1 {
-                            if self.switch_to_next_server().await {
-                                attempts += 1;
-                                continue;
-                            }
+                        if attempts < max_attempts - 1 && self.switch_to_next_server().await {
+                            attempts += 1;
+                            continue;
                         }
                         
                         return Err(XPushError::ChannelError(format!("Failed to send to ntfy after {} attempts: {}", attempts + 1, e)));

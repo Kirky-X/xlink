@@ -77,6 +77,14 @@ pub unsafe extern "C" fn xpush_free(sdk: *mut xpush_sdk) {
     }
 }
 
+/// 发送文本消息
+/// 
+/// # Safety
+/// 
+/// 该函数必须由 C 调用，且参数必须有效：
+/// - `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针
+/// - `target_ptr` 必须指向有效的设备ID数据
+/// - `text` 必须指向有效的 UTF-8 字符串
 #[no_mangle]
 pub unsafe extern "C" fn xpush_send_text(
     sdk: *mut xpush_sdk,

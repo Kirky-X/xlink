@@ -10,12 +10,18 @@ use uuid::Uuid;
 pub struct MemoryStorage {
     // DeviceId -> List of Messages
     messages: Arc<DashMap<DeviceId, Vec<Message>>>,
+    // 待发送消息队列（用于崩溃恢复）
+    pending_messages: Arc<DashMap<DeviceId, Vec<Message>>>,
+    // 审计日志
+    audit_logs: Arc<DashMap<String, Vec<String>>>,
 }
 
 impl MemoryStorage {
     pub fn new() -> Self {
         Self {
             messages: Arc::new(DashMap::new()),
+            pending_messages: Arc::new(DashMap::new()),
+            audit_logs: Arc::new(DashMap::new()),
         }
     }
 }
@@ -49,15 +55,99 @@ impl Storage for MemoryStorage {
         Ok(())
     }
 
-    async fn save_audit_log(&self, _log: String) -> Result<()> {
+    async fn save_audit_log(&self, log: String) -> Result<()> {
+        let mut logs = self.audit_logs.entry("default".to_string()).or_default();
+        logs.push(log);
         Ok(())
     }
 
-    async fn get_audit_logs(&self, _limit: usize) -> Result<Vec<String>> {
-        Ok(Vec::new())
+    async fn get_audit_logs(&self, limit: usize) -> Result<Vec<String>> {
+        match self.audit_logs.get("default") {
+            Some(logs) => Ok(logs.iter().rev().take(limit).cloned().collect()),
+            None => Ok(Vec::new()),
+        }
     }
 
     async fn cleanup_old_data(&self, _days: u32) -> Result<u64> {
+        // 内存存储不清理旧数据
         Ok(0)
+    }
+    
+    async fn save_pending_message(&self, message: &Message) -> Result<()> {
+        let mut entry = self.pending_messages.entry(message.recipient).or_default();
+        entry.push(message.clone());
+        Ok(())
+    }
+
+    async fn get_pending_messages_for_recovery(&self, device_id: &DeviceId) -> Result<Vec<Message>> {
+        match self.pending_messages.get(device_id) {
+            Some(msgs) => Ok(msgs.clone()),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    async fn remove_pending_message(&self, message_id: &Uuid) -> Result<()> {
+        for mut entry in self.pending_messages.iter_mut() {
+            entry.retain(|m| m.id != *message_id);
+        }
+        Ok(())
+    }
+
+    async fn get_storage_usage(&self) -> Result<u64> {
+        // 内存存储返回估算值
+        let mut total_size = 0u64;
+        
+        for entry in self.messages.iter() {
+            for msg in entry.value() {
+                total_size += std::mem::size_of_val(msg) as u64;
+            }
+        }
+        
+        for entry in self.pending_messages.iter() {
+            for msg in entry.value() {
+                total_size += std::mem::size_of_val(msg) as u64;
+            }
+        }
+        
+        for entry in self.audit_logs.iter() {
+            for log in entry.value() {
+                total_size += log.len() as u64;
+            }
+        }
+        
+        Ok(total_size)
+    }
+
+    async fn cleanup_storage(&self, target_size_bytes: u64) -> Result<u64> {
+        let current_size = self.get_storage_usage().await?;
+        if current_size <= target_size_bytes {
+            return Ok(0);
+        }
+
+        // 内存存储简单清理：清空最旧的数据
+        let mut removed_size = 0u64;
+        
+        // 清理消息
+        for mut entry in self.messages.iter_mut() {
+            let original_len = entry.len();
+            entry.clear();
+            removed_size += original_len as u64 * std::mem::size_of::<Message>() as u64;
+        }
+        
+        // 清理待发送消息
+        for mut entry in self.pending_messages.iter_mut() {
+            let original_len = entry.len();
+            entry.clear();
+            removed_size += original_len as u64 * std::mem::size_of::<Message>() as u64;
+        }
+        
+        // 清理审计日志
+        for mut entry in self.audit_logs.iter_mut() {
+            let original_len = entry.len();
+            entry.clear();
+            removed_size += original_len as u64 * 100; // 估算每条日志100字节
+        }
+        
+        Ok(removed_size)
     }
 }
