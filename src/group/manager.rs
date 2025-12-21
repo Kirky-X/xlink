@@ -1,6 +1,6 @@
 use crate::core::error::{Result, XPushError};
 use crate::core::types::{
-    DeviceId, Group, GroupId, GroupMember, MemberRole, MemberStatus, Message, MessagePayload, MessagePriority,
+    DeviceId, Group, GroupId, GroupMember, MemberRole, MemberStatus, Message, MessagePayload, MessagePriority
 };
 use crate::crypto::treekem::UpdatePath;
 use crate::crypto::treekem::TreeKemEngine;
@@ -13,6 +13,17 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 use x25519_dalek::PublicKey;
+
+/// 设备邻近性类型，用于混合拓扑广播
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProximityType {
+    /// 近场设备，适合使用BLE/WiFi Direct
+    Nearby,
+    /// 远程设备，需要使用Internet通道
+    Remote,
+    /// 可作为中继节点的设备
+    RelayCandidate,
+}
 
 type AckStats = (HashSet<DeviceId>, HashSet<DeviceId>, HashSet<DeviceId>);
 
@@ -59,6 +70,36 @@ impl GroupManager {
     /// 注册设备公钥到 TreeKEM 引擎
     pub fn register_device_key(&self, device_id: DeviceId, public_key: PublicKey) -> Result<()> {
         self.treekem_engine.register_device_key(device_id, public_key)
+    }
+
+    /// 智能分类设备邻近性，用于混合拓扑广播
+    /// 基于路由器选择的通道类型来判断设备距离
+    async fn classify_member_proximity(&self, member_id: DeviceId) -> ProximityType {
+        // 创建一个测试消息来判断路由器会选择什么通道
+        let test_message = Message {
+            id: uuid::Uuid::new_v4(), // 测试ID
+            sender: self.local_device_id,
+            recipient: member_id,
+            group_id: None,
+            payload: MessagePayload::Text("test".to_string()),
+            timestamp: 0,
+            priority: crate::core::types::MessagePriority::Normal,
+            require_ack: false,
+        };
+        
+        // 尝试选择通道来判断设备类型
+        match self.router.select_channel(&test_message).await {
+            Ok(channel) => {
+                match channel.channel_type() {
+                    crate::core::types::ChannelType::BluetoothLE | 
+                    crate::core::types::ChannelType::BluetoothMesh => ProximityType::Nearby,
+                    crate::core::types::ChannelType::WiFiDirect => ProximityType::Nearby,
+                    crate::core::types::ChannelType::Internet | 
+                    crate::core::types::ChannelType::Lan => ProximityType::Remote,
+                }
+            }
+            Err(_) => ProximityType::Remote, // 如果无法选择通道，默认为远程
+        }
     }
 
     pub async fn create_group(&self, name: String, initial_members: Vec<DeviceId>) -> Result<Group> {
@@ -216,30 +257,55 @@ impl GroupManager {
             }
         };
 
-        // 获取当前在线成员并分类（直接可达 vs 需要中继）
-        let mut direct_members = Vec::new();
-        let mut relay_candidates = Vec::new();
+        // 获取当前在线成员并分类（近场 vs 远程 vs 需要中继）
+        let mut nearby_members = Vec::new();      // 近场设备（BLE/WiFi Direct）
+        let mut remote_members = Vec::new();    // 远程设备（Internet）
+        let mut relay_candidates = Vec::new();  // 可作为中继的设备
         
         for &member_id in group.members.keys() {
             if member_id == self.local_device_id {
                 continue;
             }
             
-            // 简单逻辑：如果 Router 能直接找到路由，则视为直接成员
-            // 在实际 Mesh 场景中，这里可以更复杂，例如优先选择高带宽通道
-            direct_members.push(member_id);
+            // 基于距离和网络类型智能分类
+            // 在实际实现中，这里会使用更复杂的启发式算法
+            match self.classify_member_proximity(member_id).await {
+                ProximityType::Nearby => nearby_members.push(member_id),
+                ProximityType::Remote => remote_members.push(member_id),
+                ProximityType::RelayCandidate => {
+                    relay_candidates.push(member_id);
+                    // 中继候选者也可能需要接收消息
+                    nearby_members.push(member_id);
+                }
+            }
         }
 
+        // IT-GRP-003: 混合拓扑广播 - 根据设备距离选择不同的通信通道
+        // 近场设备通过 BLE/WiFi 直连，远程设备通过 ntfy 服务器
+        
         // 并行发送消息给所有群组成员
         let mut futures = FuturesUnordered::new();
         let router_clone = self.router.clone();
         let local_device_id = self.local_device_id;
         
-        for member_id in direct_members {
+        // 合并所有成员到一个列表中处理
+        let all_members: Vec<(DeviceId, bool)> = nearby_members.into_iter()
+            .map(|id| (id, true)) // true 表示近场设备
+            .chain(remote_members.into_iter().map(|id| (id, false))) // false 表示远程设备
+            .collect();
+        
+        for (member_id, is_nearby) in all_members {
             let router = router_clone.clone();
             let encrypted_payload = encrypted_payload.clone();
 
             futures.push(async move {
+                let priority = if is_nearby { 
+                    MessagePriority::High 
+                } else { 
+                    MessagePriority::Normal 
+                };
+                let require_ack = !is_nearby; // 远程设备需要ACK确认
+                
                 let message = Message {
                     id: message_id,
                     sender: local_device_id,
@@ -250,22 +316,36 @@ impl GroupManager {
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap()
                         .as_secs(),
-                    priority: MessagePriority::Normal,
-                    require_ack: false,
+                    priority,
+                    require_ack,
                 };
                 
+                // 选择通道并发送消息
                 match router.select_channel(&message).await {
                     Ok(channel) => {
-                        // 如果选中的是 Mesh 通道，它本身可能支持中继
-                        let is_mesh = channel.channel_type() == crate::core::types::ChannelType::BluetoothMesh;
+                        let channel_type = channel.channel_type();
+                        let is_nearby_channel = matches!(channel_type, 
+                            crate::core::types::ChannelType::BluetoothLE | 
+                            crate::core::types::ChannelType::BluetoothMesh |
+                            crate::core::types::ChannelType::WiFiDirect);
+                        
+                        let can_relay = is_nearby_channel; // 只有近场通道可以作为中继
                         
                         match channel.send(message).await {
                             Ok(_) => {
-                                log::debug!("Message {} sent to device {} (Mesh: {})", message_id, member_id, is_mesh);
-                                Ok((member_id, is_mesh))
+                                if is_nearby {
+                                    log::debug!("[Nearby] Message {} sent to device {} via {:?}", message_id, member_id, channel_type);
+                                } else {
+                                    log::debug!("[Remote] Message {} sent to device {} via {:?}", message_id, member_id, channel_type);
+                                }
+                                Ok((member_id, can_relay))
                             }
                             Err(e) => {
-                                log::warn!("Failed to send message {} to device {}: {}", message_id, member_id, e);
+                                if is_nearby {
+                                    log::warn!("[Nearby] Failed to send message {} to device {}: {}", message_id, member_id, e);
+                                } else {
+                                    log::warn!("[Remote] Failed to send message {} to device {}: {}", message_id, member_id, e);
+                                }
                                 Err((member_id, e))
                             }
                         }
@@ -279,12 +359,13 @@ impl GroupManager {
         }
 
         // 等待发送完成，并收集可作为中继节点的成员
+        let mut available_relays = Vec::new(); // 可用的中继节点
         while let Some(result) = futures.next().await {
             match result {
                 Ok((device_id, can_relay)) => {
                     successful_devices.insert(device_id);
                     if can_relay {
-                        relay_candidates.push(device_id);
+                        available_relays.push(device_id);
                     }
                 }
                 Err((device_id, _)) => {
@@ -295,15 +376,15 @@ impl GroupManager {
 
         // --- F4: Mesh 中继模式实现 ---
         // 如果有成员发送失败，且我们有可用的中继候选者，尝试请求中继
-        if !failed_devices.is_empty() && !relay_candidates.is_empty() {
+        if !failed_devices.is_empty() && !available_relays.is_empty() {
             log::info!("Attempting Mesh relay for {} failed devices via {} candidates", 
-                failed_devices.len(), relay_candidates.len());
+                failed_devices.len(), available_relays.len());
             
             // 模拟 Mesh 中继逻辑：请求已成功的节点转发消息
             // 在真实实现中，这需要定义一种新的 RelayRequest 消息类型
             for &failed_id in &failed_devices {
                 // 简化模拟：假设第一个中继候选者能帮我们触达
-                if let Some(&relay_id) = relay_candidates.first() {
+                if let Some(&relay_id) = available_relays.first() {
                     log::info!("[Mesh Relay] Requesting device {} to relay message {} to {}", 
                         relay_id, message_id, failed_id);
                     // 实际中这里会调用 router.send(RelayMessage { target: failed_id, content: ... })
