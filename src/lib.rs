@@ -351,6 +351,14 @@ impl UnifiedPushSDK {
         self.group_manager.rotate_group_key(group_id).await
     }
 
+    pub fn router(&self) -> Arc<Router> {
+        self.router.clone()
+    }
+
+    pub fn group_manager(&self) -> Arc<GroupManager> {
+        self.group_manager.clone()
+    }
+
     pub async fn receive(&self) -> Option<Message> {
         let mut rx = self.app_rx.lock().await;
         rx.recv().await

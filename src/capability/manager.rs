@@ -73,10 +73,12 @@ impl CapabilityManager {
         self.remote_caps.insert(caps.device_id, caps);
     }
 
-    pub fn get_remote_caps(&self, device: &DeviceId) -> Option<DeviceCapabilities> {
-        self.remote_caps.get(device).map(|v| v.clone())
+    /// 获取指定远程设备的能力
+    pub fn get_remote_device(&self, device_id: DeviceId) -> Option<DeviceCapabilities> {
+        self.remote_caps.get(&device_id).map(|entry| entry.value().clone())
     }
 
+    /// 获取所有远程设备 ID
     pub fn get_all_remote_devices(&self) -> Vec<DeviceId> {
         self.remote_caps.iter().map(|r| *r.key()).collect()
     }

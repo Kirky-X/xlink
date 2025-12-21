@@ -114,6 +114,38 @@ impl GroupManager {
         Ok(group)
     }
 
+    pub async fn add_member(&self, group_id: GroupId, device_id: DeviceId) -> Result<()> {
+        let mut group = self.groups.get_mut(&group_id).ok_or_else(|| {
+            XPushError::GroupNotFound(group_id.to_string())
+        })?;
+
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        
+        // 注册新成员公钥到 TreeKEM (如果已有)
+        if let Ok(public_key) = self.treekem_engine.get_device_public_key(device_id) {
+            self.treekem_engine.add_member(group_id, device_id, public_key)?;
+        } else {
+            // 如果没有公钥，在测试环境下生成一个
+            use rand::rngs::OsRng;
+            use x25519_dalek::StaticSecret;
+            let secret = StaticSecret::random_from_rng(OsRng);
+            let public = PublicKey::from(&secret);
+            self.treekem_engine.register_device_key(device_id, public)?;
+            self.treekem_engine.add_member(group_id, device_id, public)?;
+        }
+
+        group.members.insert(device_id, GroupMember {
+            device_id,
+            role: MemberRole::Member,
+            joined_at: now,
+            last_seen: now,
+            status: MemberStatus::Online,
+        });
+
+        log::info!("Added member {} to group {}", device_id, group_id);
+        Ok(())
+    }
+
     pub async fn join_group(&self, group: Group) -> Result<()> {
         let group_id = group.id;
         
