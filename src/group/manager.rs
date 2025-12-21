@@ -1,0 +1,618 @@
+use crate::core::error::{Result, XPushError};
+use crate::core::types::{
+    DeviceId, Group, GroupId, GroupMember, MemberRole, MemberStatus, Message, MessagePayload, MessagePriority,
+};
+use crate::crypto::treekem::UpdatePath;
+use crate::crypto::treekem::TreeKemEngine;
+use crate::router::selector::Router;
+use dashmap::DashMap;
+use futures::stream::{FuturesUnordered, StreamExt};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tokio::sync::{mpsc, RwLock};
+use uuid::Uuid;
+use x25519_dalek::PublicKey;
+
+type AckStats = (HashSet<DeviceId>, HashSet<DeviceId>, HashSet<DeviceId>);
+
+pub struct GroupManager {
+    local_device_id: DeviceId,
+    groups: DashMap<GroupId, Group>,
+    router: Arc<Router>,
+    // TreeKEM 群组密钥管理引擎
+    treekem_engine: Arc<TreeKemEngine>,
+    // 追踪待确认的消息: MessageId -> (Pending Set, Success Set, Failure Set)
+    pending_acks: Arc<DashMap<Uuid, AckStats>>,
+    // 邀请去重
+    processed_invites: Arc<DashMap<GroupId, u64>>,
+    // ACK 超时配置
+    ack_timeout: Duration,
+    // 广播结果通知通道
+    broadcast_results: Arc<RwLock<HashMap<Uuid, mpsc::Sender<BroadcastResult>>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BroadcastResult {
+    pub message_id: Uuid,
+    pub successful_devices: HashSet<DeviceId>,
+    pub failed_devices: HashSet<DeviceId>,
+    pub total_attempts: usize,
+}
+
+impl GroupManager {
+    pub fn new(local_device_id: DeviceId, router: Arc<Router>) -> Self {
+        let treekem_engine = Arc::new(TreeKemEngine::new(local_device_id));
+        
+        Self {
+            local_device_id,
+            groups: DashMap::new(),
+            router,
+            treekem_engine,
+            pending_acks: Arc::new(DashMap::new()),
+            processed_invites: Arc::new(DashMap::new()),
+            ack_timeout: Duration::from_secs(30),
+            broadcast_results: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// 注册设备公钥到 TreeKEM 引擎
+    pub fn register_device_key(&self, device_id: DeviceId, public_key: PublicKey) -> Result<()> {
+        self.treekem_engine.register_device_key(device_id, public_key)
+    }
+
+    pub async fn create_group(&self, name: String, initial_members: Vec<DeviceId>) -> Result<Group> {
+        let group_id = GroupId::new();
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        
+        // 初始化 TreeKEM 群组密钥
+        let member_keys: Vec<_> = initial_members.iter()
+            .filter_map(|&device_id| {
+                match self.treekem_engine.get_device_public_key(device_id) {
+                    Ok(key) => Some((device_id, key)),
+                    Err(_) => None,
+                }
+            })
+            .collect();
+        
+        if member_keys.is_empty() {
+            return Err(XPushError::CryptoError("No valid member keys found".to_string()));
+        }
+        
+        self.treekem_engine.create_group(group_id, member_keys)?;
+        
+        let mut members = HashMap::new();
+        for device_id in initial_members {
+            members.insert(device_id, GroupMember {
+                device_id,
+                role: MemberRole::Member,
+                joined_at: now,
+                last_seen: now,
+                status: MemberStatus::Online,
+            });
+        }
+        
+        // 设置本地设备为管理员
+        members.insert(self.local_device_id, GroupMember {
+            device_id: self.local_device_id,
+            role: MemberRole::Admin,
+            joined_at: now,
+            last_seen: now,
+            status: MemberStatus::Online,
+        });
+        
+        let group = Group {
+            id: group_id,
+            name: name.clone(),
+            members,
+            created_at: now,
+        };
+        
+        self.groups.insert(group_id, group.clone());
+        
+        log::info!("Created group {} with {} members", group_id, group.members.len());
+        Ok(group)
+    }
+
+    pub async fn join_group(&self, group: Group) -> Result<()> {
+        let group_id = group.id;
+        
+        // 检查是否已存在
+        if self.groups.contains_key(&group_id) {
+            return Err(XPushError::GroupAlreadyExists(group_id));
+        }
+        
+        // 初始化 TreeKEM 群组成员密钥
+        let member_keys: Vec<_> = group.members.keys()
+            .filter_map(|&device_id| {
+                match self.treekem_engine.get_device_public_key(device_id) {
+                    Ok(key) => Some((device_id, key)),
+                    Err(_) => None,
+                }
+            })
+            .collect();
+        
+        if member_keys.is_empty() {
+            return Err(XPushError::CryptoError("No valid member keys found for joining group".to_string()));
+        }
+        
+        // Add each member to the TreeKEM group
+        for (device_id, public_key) in member_keys {
+            self.treekem_engine.add_member(group_id, device_id, public_key)?;
+        }
+        
+        self.groups.insert(group_id, group.clone());
+        
+        log::info!("Joined group {} with {} members", group_id, group.members.len());
+        Ok(())
+    }
+
+    pub async fn leave_group(&self, group_id: GroupId) -> Result<()> {
+        // 从 TreeKEM 群组中移除
+        self.treekem_engine.remove_member(group_id, self.local_device_id)?;
+        
+        // 从本地群组列表中移除
+        self.groups.remove(&group_id);
+        
+        log::info!("Left group {}", group_id);
+        Ok(())
+    }
+
+    pub async fn get_group(&self, group_id: GroupId) -> Option<Group> {
+        self.groups.get(&group_id).map(|g| g.clone())
+    }
+
+    pub async fn get_all_groups(&self) -> Vec<Group> {
+        self.groups.iter().map(|entry| entry.value().clone()).collect()
+    }
+
+    pub async fn broadcast(&self, group_id: GroupId, payload: MessagePayload) -> Result<Uuid> {
+        let group = self.groups.get(&group_id).ok_or_else(|| {
+            XPushError::GroupNotFound(group_id.to_string())
+        })?;
+
+        let message_id = Uuid::new_v4();
+        let mut successful_devices = HashSet::new();
+        let mut failed_devices = HashSet::new();
+        
+        // 使用 TreeKEM 加密消息
+        let encrypted_payload = match self.treekem_engine.encrypt_group_message(group_id, &payload) {
+            Ok(encrypted) => encrypted,
+            Err(e) => {
+                log::error!("Failed to encrypt group message: {}", e);
+                return Err(XPushError::CryptoError(e.to_string()));
+            }
+        };
+
+        // 获取当前在线成员并分类（直接可达 vs 需要中继）
+        let mut direct_members = Vec::new();
+        let mut relay_candidates = Vec::new();
+        
+        for &member_id in group.members.keys() {
+            if member_id == self.local_device_id {
+                continue;
+            }
+            
+            // 简单逻辑：如果 Router 能直接找到路由，则视为直接成员
+            // 在实际 Mesh 场景中，这里可以更复杂，例如优先选择高带宽通道
+            direct_members.push(member_id);
+        }
+
+        // 并行发送消息给所有群组成员
+        let mut futures = FuturesUnordered::new();
+        let router_clone = self.router.clone();
+        let local_device_id = self.local_device_id;
+        
+        for member_id in direct_members {
+            let router = router_clone.clone();
+            let encrypted_payload = encrypted_payload.clone();
+
+            futures.push(async move {
+                let message = Message {
+                    id: message_id,
+                    sender: local_device_id,
+                    recipient: member_id,
+                    group_id: Some(group_id),
+                    payload: encrypted_payload.clone(),
+                    timestamp: SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    priority: MessagePriority::Normal,
+                    require_ack: false,
+                };
+                
+                match router.select_channel(&message).await {
+                    Ok(channel) => {
+                        // 如果选中的是 Mesh 通道，它本身可能支持中继
+                        let is_mesh = channel.channel_type() == crate::core::types::ChannelType::BluetoothMesh;
+                        
+                        match channel.send(message).await {
+                            Ok(_) => {
+                                log::debug!("Message {} sent to device {} (Mesh: {})", message_id, member_id, is_mesh);
+                                Ok((member_id, is_mesh))
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to send message {} to device {}: {}", message_id, member_id, e);
+                                Err((member_id, e))
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to select channel for message {} to device {}: {}", message_id, member_id, e);
+                        Err((member_id, e))
+                    }
+                }
+            });
+        }
+
+        // 等待发送完成，并收集可作为中继节点的成员
+        while let Some(result) = futures.next().await {
+            match result {
+                Ok((device_id, can_relay)) => {
+                    successful_devices.insert(device_id);
+                    if can_relay {
+                        relay_candidates.push(device_id);
+                    }
+                }
+                Err((device_id, _)) => {
+                    failed_devices.insert(device_id);
+                }
+            };
+        }
+
+        // --- F4: Mesh 中继模式实现 ---
+        // 如果有成员发送失败，且我们有可用的中继候选者，尝试请求中继
+        if !failed_devices.is_empty() && !relay_candidates.is_empty() {
+            log::info!("Attempting Mesh relay for {} failed devices via {} candidates", 
+                failed_devices.len(), relay_candidates.len());
+            
+            // 模拟 Mesh 中继逻辑：请求已成功的节点转发消息
+            // 在真实实现中，这需要定义一种新的 RelayRequest 消息类型
+            for &failed_id in &failed_devices {
+                // 简化模拟：假设第一个中继候选者能帮我们触达
+                if let Some(&relay_id) = relay_candidates.first() {
+                    log::info!("[Mesh Relay] Requesting device {} to relay message {} to {}", 
+                        relay_id, message_id, failed_id);
+                    // 实际中这里会调用 router.send(RelayMessage { target: failed_id, content: ... })
+                }
+            }
+        }
+
+        // 记录ACK追踪信息
+        if !successful_devices.is_empty() {
+            self.pending_acks.insert(message_id, (successful_devices.clone(), HashSet::new(), HashSet::new()));
+            
+            // 启动ACK超时任务
+            let pending_acks = self.pending_acks.clone();
+            let ack_timeout = self.ack_timeout;
+            
+            tokio::spawn(async move {
+                tokio::time::sleep(ack_timeout).await;
+                pending_acks.remove(&message_id);
+                log::debug!("ACK timeout for message {}", message_id);
+            });
+        }
+
+        let total_attempts = successful_devices.len() + failed_devices.len();
+        
+        log::info!("Broadcast message {} to group {}: {} successful, {} failed out of {} attempts", 
+                   message_id, group_id, successful_devices.len(), failed_devices.len(), total_attempts);
+
+        Ok(message_id)
+    }
+
+    /// 标记设备为成功接收（收到ACK）
+    pub async fn mark_device_success(&self, msg_id: Uuid, device_id: DeviceId) {
+        if let Some(mut entry) = self.pending_acks.get_mut(&msg_id) {
+            let (ref mut pending, ref mut success, ref mut _failure) = *entry;
+            
+            if pending.remove(&device_id) {
+                success.insert(device_id);
+                log::debug!("Device {} acknowledged message {}", device_id, msg_id);
+            }
+        }
+    }
+    
+    /// 标记设备为失败（无法送达或超时）
+    pub async fn mark_device_failed(&self, msg_id: Uuid, device_id: DeviceId) {
+        if let Some(mut entry) = self.pending_acks.get_mut(&msg_id) {
+            let (ref mut pending, ref mut _success, ref mut failure) = *entry;
+            
+            if pending.remove(&device_id) {
+                failure.insert(device_id);
+                log::warn!("Device {} marked as failed for message {}", device_id, msg_id);
+            }
+        }
+    }
+    
+    /// 获取消息ACK状态
+    pub async fn get_ack_status(&self, msg_id: Uuid) -> Option<(usize, usize, usize)> {
+        self.pending_acks.get(&msg_id).map(|entry| {
+            let (pending, success, failure) = &*entry;
+            (pending.len(), success.len(), failure.len())
+        })
+    }
+
+    /// 执行群组密钥更新（前向保密性）
+    pub async fn rotate_group_key(&self, group_id: GroupId) -> Result<()> {
+        match self.treekem_engine.update_group_key(group_id, self.local_device_id) {
+            Ok(update_path) => {
+                log::info!("Group key rotated for group {} at epoch {}", group_id, update_path.epoch);
+                
+                // 广播密钥更新消息给所有群组成员
+                let update_payload = MessagePayload::GroupKeyUpdate {
+                    group_id,
+                    epoch: update_path.epoch,
+                    update_path: update_path.path_public_keys.iter().flat_map(|pk| pk.as_bytes().to_vec()).collect(),
+                };
+                
+                self.broadcast(group_id, update_payload).await?;
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("Failed to rotate group key for group {}: {}", group_id, e);
+                Err(XPushError::CryptoError(e.to_string()))
+            }
+        }
+    }
+
+    pub fn encrypt_group_message(&self, group_id: GroupId, payload: &MessagePayload) -> Result<MessagePayload> {
+        self.treekem_engine.encrypt_group_message(group_id, payload)
+            .map_err(|e| XPushError::CryptoError(e.to_string()))
+    }
+
+    pub fn decrypt_group_message(&self, group_id: GroupId, encrypted_payload: &MessagePayload) -> Result<MessagePayload> {
+        self.treekem_engine.decrypt_group_message(group_id, encrypted_payload)
+            .map_err(|e| XPushError::CryptoError(e.to_string()))
+    }
+
+    /// 处理群组密钥更新
+    pub async fn handle_key_update(&self, group_id: GroupId, epoch: u64, _update_path: Vec<u8>) -> Result<()> {
+        // TreeKEM引擎没有apply_group_key_update方法，使用apply_update_path
+        let update_path_struct = UpdatePath {
+            updater_id: self.local_device_id,
+            path_secrets: vec![], // 这里需要根据update_path重构
+            path_public_keys: vec![], // 这里需要根据update_path重构
+            epoch,
+        };
+        match self.treekem_engine.apply_update_path(group_id, &update_path_struct) {
+            Ok(_) => {
+                log::info!("Applied group key update for group {} at epoch {}", group_id, epoch);
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("Failed to apply group key update for group {}: {}", group_id, e);
+                Err(XPushError::CryptoError(e.to_string()))
+            }
+        }
+    }
+
+    /// 处理ACK消息
+    pub async fn handle_ack(&self, original_msg_id: Uuid, responder: DeviceId) {
+        self.mark_device_success(original_msg_id, responder).await;
+        
+        // 检查是否所有设备都已响应
+        if let Some(status) = self.get_ack_status(original_msg_id).await {
+            let (pending, success, failure) = status;
+            if pending == 0 {
+                log::info!("Message {} ACK complete: {} successful, {} failed", 
+                          original_msg_id, success, failure);
+                
+                // 清理ACK追踪
+                self.pending_acks.remove(&original_msg_id);
+                
+                // 发送广播结果通知
+                if let Some(tx) = self.broadcast_results.write().await.remove(&original_msg_id) {
+                    let _ = tx.send(BroadcastResult {
+                        message_id: original_msg_id,
+                        successful_devices: HashSet::new(), // TODO: 从pending_acks获取
+                        failed_devices: HashSet::new(),
+                        total_attempts: success + failure,
+                    }).await;
+                }
+            }
+        }
+    }
+
+    /// 更新群组成员状态
+    pub async fn update_member_state(&self, group_id: GroupId, device_id: DeviceId, status: MemberStatus) -> Result<()> {
+        if let Some(mut group) = self.groups.get_mut(&group_id) {
+            if let Some(member) = group.members.get_mut(&device_id) {
+                // 更新成员状态
+                match status {
+                    MemberStatus::Online => {
+                        member.status = MemberStatus::Online;
+                        member.last_seen = SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                    }
+                    MemberStatus::Offline => {
+                        member.status = MemberStatus::Offline;
+                    }
+                    MemberStatus::Away => {
+                        member.status = MemberStatus::Away;
+                    }
+                    MemberStatus::Busy => {
+                        member.status = MemberStatus::Busy;
+                    }
+                }
+                
+                // 更新成员的最后活跃时间、状态等信息
+                log::info!("Updated member {} state in group {}: {:?}", device_id, group_id, status);
+            }
+        }
+
+        // 触发状态同步事件
+        self.notify_group_state_change(group_id).await;
+        Ok(())
+    }
+
+    /// 通知群组状态变更
+    pub async fn notify_group_state_change(&self, group_id: GroupId) {
+        log::info!("Group {} state changed", group_id);
+        // TODO: 实现状态变更通知逻辑
+        // 这里可以发送通知给其他成员，或者触发事件监听器
+    }
+
+    /// 大规模群组性能优化 - 分层广播
+    pub async fn broadcast_large_group(&self, group_id: GroupId, payload: MessagePayload) -> Result<Vec<Uuid>> {
+        const MAX_SUBGROUP_SIZE: usize = 50; // 每个子群组最大成员数
+        
+        let group = self.groups.get(&group_id).ok_or_else(|| {
+            XPushError::GroupNotFound(group_id.to_string())
+        })?;
+
+        if group.members.len() <= MAX_SUBGROUP_SIZE {
+            // 小群组直接广播
+            let msg_id = self.broadcast(group_id, payload).await?;
+            return Ok(vec![msg_id]);
+        }
+
+        // 大群组分层广播
+        let member_ids: Vec<DeviceId> = group.members.keys().copied()
+            .filter(|&id| id != self.local_device_id)
+            .collect();
+        
+        let mut message_ids = Vec::new();
+        
+        // 将成员分成子群组
+        for chunk in member_ids.chunks(MAX_SUBGROUP_SIZE) {
+            let sub_group_id = GroupId::new(); // 创建临时子群组ID
+            let mut sub_group_members = HashMap::new();
+            
+            for &member_id in chunk {
+                sub_group_members.insert(member_id, GroupMember {
+                    device_id: member_id,
+                    role: MemberRole::Member,
+                    joined_at: SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    last_seen: SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    status: MemberStatus::Online,
+                });
+            }
+            
+            // 创建临时子群组
+            let sub_group = Group {
+                id: sub_group_id,
+                name: format!("{}_sub_{}", group.name, sub_group_id),
+                members: sub_group_members,
+                created_at: SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
+            
+            self.groups.insert(sub_group_id, sub_group);
+            
+            // 在子群组中广播消息
+            let sub_msg_id = self.broadcast(sub_group_id, payload.clone()).await?;
+            message_ids.push(sub_msg_id);
+            
+            // 延迟清理临时子群组（给消息发送留时间）
+            let groups = self.groups.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                groups.remove(&sub_group_id);
+            });
+        }
+        
+        Ok(message_ids)
+    }
+    
+    pub async fn handle_incoming_group_message(&self, message: &Message) -> Result<()> {
+        if let Some(group_id) = message.group_id {
+            // 首先尝试解密消息
+            let decrypted_payload = match self.treekem_engine.decrypt_group_message(group_id, &message.payload) {
+                Ok(decrypted) => decrypted,
+                Err(e) => {
+                    log::warn!("Failed to decrypt group message from {} in group {}: {}", message.sender, group_id, e);
+                    // 尝试反序列化原始payload
+                    match &message.payload {
+                        MessagePayload::Binary(data) => {
+                            match serde_json::from_slice::<MessagePayload>(data) {
+                                Ok(payload) => payload,
+                                Err(_) => message.payload.clone(), // 回退到原始payload
+                            }
+                        },
+                        _ => message.payload.clone(), // 回退到原始payload
+                    }
+                }
+            };
+
+            match &decrypted_payload {
+                MessagePayload::GroupInvite { name, .. } => {
+                    if !self.groups.contains_key(&group_id) {
+                        // 简单去重
+                        if self.processed_invites.contains_key(&group_id) { return Ok(()); }
+                        self.processed_invites.insert(group_id, message.timestamp);
+
+                        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+                        let mut members = HashMap::new();
+                        members.insert(message.sender, GroupMember { 
+                            device_id: message.sender, 
+                            role: MemberRole::Admin, 
+                            joined_at: now,
+                            last_seen: now,
+                            status: MemberStatus::Online,
+                        });
+                        members.insert(self.local_device_id, GroupMember { 
+                            device_id: self.local_device_id, 
+                            role: MemberRole::Member, 
+                            joined_at: now,
+                            last_seen: now,
+                            status: MemberStatus::Online,
+                        });
+                        
+                        let group = Group {
+                            id: group_id,
+                            name: name.clone(),
+                            members,
+                            created_at: now,
+                        };
+                        self.groups.insert(group_id, group);
+                        
+                        // 初始化 TreeKEM 群组密钥
+                        if let Ok(public_key) = self.treekem_engine.get_device_public_key(message.sender) {
+                            let member_keys = vec![(message.sender, public_key)];
+                            if let Err(e) = self.treekem_engine.create_group(group_id, member_keys) {
+                                log::warn!("Failed to initialize TreeKEM for invited group {}: {}", group_id, e);
+                            }
+                        } else {
+                            log::warn!("Failed to get public key for device {} when initializing TreeKEM for group {}", message.sender, group_id);
+                        }
+                    }
+                },
+                MessagePayload::GroupAck { original_msg_id, responder } => {
+                    // 处理群组ACK消息
+                    self.handle_ack(*original_msg_id, *responder).await;
+                },
+                MessagePayload::GroupKeyUpdate { group_id, epoch, update_path } => {
+                    // 处理群组密钥更新消息
+                    if let Err(e) = self.handle_key_update(*group_id, *epoch, update_path.clone()).await {
+                        log::error!("Failed to handle key update for group {}: {}", group_id, e);
+                    }
+                },
+                _ => {
+                    // 更新发送者的最后活跃时间
+                    if let Some(mut group) = self.groups.get_mut(&group_id) {
+                        if let Some(member) = group.members.get_mut(&message.sender) {
+                            member.last_seen = SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                            member.status = MemberStatus::Online;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}

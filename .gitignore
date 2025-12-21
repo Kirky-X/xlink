@@ -1,0 +1,11 @@
+/target
+
+# Trae IDE configuration files
+.trae/
+.trae/rules/project.md
+
+# Documentation files that should not be version controlled
+docs/prd.md
+docs/tdd.md
+docs/test.md
+docs/uat.md
