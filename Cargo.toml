@@ -33,6 +33,7 @@ flate2 = "1.0"           # 压缩算法
 sysinfo = "0.29"         # 系统状态监控
 tokio-stream = "0.1"     # 流适配器
 hex = "0.4"              # 十六进制编码
+reqwest = { version = "0.11", features = ["json"] } # HTTP客户端
 
 [dev-dependencies]
 tokio-test = "0.4"

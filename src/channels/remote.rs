@@ -1,10 +1,14 @@
-use crate::core::error::{Result, XPushError};
+use crate::core::error::Result;
+#[cfg(not(feature = "test_no_external_deps"))]
+use crate::core::error::XPushError;
 use crate::core::traits::Channel;
 use crate::core::types::{ChannelState, ChannelType, DeviceId, Message, NetworkType};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+#[cfg(not(feature = "test_no_external_deps"))]
+use reqwest;
 
 /// ntfy 远程通道实现
 /// 利用 https://ntfy.sh 进行公网推送
@@ -22,6 +26,11 @@ impl RemoteChannel {
             server_url: server_url.unwrap_or_else(|| "https://ntfy.sh".to_string()),
             peer_topics: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// 获取服务器URL
+    pub fn server_url(&self) -> &str {
+        &self.server_url
     }
 
     pub async fn register_peer_topic(&self, device_id: DeviceId, topic: String) {
@@ -42,18 +51,72 @@ impl Channel for RemoteChannel {
             topics.get(&message.recipient).cloned()
         };
 
-        if let Some(topic) = topic {
-            let _url = format!("{}/{}", self.server_url, topic);
-            let _payload = serde_json::to_vec(&message).map_err(XPushError::SerializationError)?;
-            
-            log::info!("[Remote] Publishing message {} to ntfy topic {}", message.id, topic);
-            
-            // 在实际实现中，这里会使用 reqwest 发送 POST 请求
-            // match reqwest::Client::new().post(&url).body(payload).send().await { ... }
-            
+        #[cfg(feature = "test_no_external_deps")]
+        {
+            // 测试模式：模拟成功发送，不实际进行HTTP请求
+            let topic = topic.unwrap_or_else(|| message.recipient.to_string());
+            log::info!("[Remote] Mock sending message {} to ntfy topic {} (test mode)", message.id, topic);
+            self.register_peer_topic(message.recipient, topic.clone()).await;
             Ok(())
-        } else {
-            Err(XPushError::ChannelError(format!("No ntfy topic registered for device {}", message.recipient)))
+        }
+
+        #[cfg(not(feature = "test_no_external_deps"))]
+        {
+            if let Some(topic) = topic {
+                let url = format!("{}/{}", self.server_url, topic);
+                let payload = serde_json::to_vec(&message).map_err(XPushError::SerializationError)?;
+                
+                log::info!("[Remote] Publishing message {} to ntfy topic {}", message.id, topic);
+                
+                // 使用 reqwest 发送 POST 请求到 ntfy
+                let client = reqwest::Client::new();
+                let response = client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .body(payload)
+                    .send()
+                    .await
+                    .map_err(|e| XPushError::NetworkError(format!("Failed to send to ntfy: {}", e)))?;
+                
+                if response.status().is_success() {
+                    log::info!("[Remote] Successfully published message {} to ntfy", message.id);
+                    Ok(())
+                } else {
+                    let status = response.status();
+                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                    log::error!("[Remote] Failed to publish message {} to ntfy: {} - {}", message.id, status, error_text);
+                    Err(XPushError::ChannelError(format!("ntfy request failed: {} - {}", status, error_text)))
+                }
+            } else {
+                // 如果没有注册主题，使用设备ID作为主题
+                let topic = message.recipient.to_string();
+                let url = format!("{}/{}", self.server_url, topic);
+                let payload = serde_json::to_vec(&message).map_err(XPushError::SerializationError)?;
+                
+                log::info!("[Remote] Publishing message {} to ntfy topic {} (auto-generated)", message.id, topic);
+                
+                // 使用 reqwest 发送 POST 请求到 ntfy
+                let client = reqwest::Client::new();
+                let response = client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .body(payload)
+                    .send()
+                    .await
+                    .map_err(|e| XPushError::NetworkError(format!("Failed to send to ntfy: {}", e)))?;
+                
+                if response.status().is_success() {
+                    log::info!("[Remote] Successfully published message {} to ntfy", message.id);
+                    // 注册这个主题以便后续使用
+                    self.register_peer_topic(message.recipient, topic).await;
+                    Ok(())
+                } else {
+                    let status = response.status();
+                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                    log::error!("[Remote] Failed to publish message {} to ntfy: {} - {}", message.id, status, error_text);
+                    Err(XPushError::ChannelError(format!("ntfy request failed: {} - {}", status, error_text)))
+                }
+            }
         }
     }
 
