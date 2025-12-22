@@ -501,4 +501,19 @@ impl TreeKemEngine {
         log::info!("Applied update path for group {} at epoch {}", group_id, group.epoch);
         Ok(())
     }
+
+    /// 清理所有数据，防止内存泄漏 - use proper entry removal to avoid DashMap fragmentation
+    pub fn clear_keys(&self) {
+        // Remove groups entries one by one to avoid fragmentation
+        let group_keys: Vec<_> = self.groups.iter().map(|entry| entry.key().clone()).collect();
+        for group_id in group_keys {
+            self.groups.remove(&group_id);
+        }
+
+        // Remove device_public_keys entries one by one to avoid fragmentation
+        let device_keys: Vec<_> = self.device_public_keys.iter().map(|entry| entry.key().clone()).collect();
+        for device_id in device_keys {
+            self.device_public_keys.remove(&device_id);
+        }
+    }
 }

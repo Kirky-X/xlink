@@ -69,16 +69,16 @@ pub struct CryptoState {
 }
 
 impl SessionState {
-    fn new(shared_secret: Key, peer_verifying_key: Option<VerifyingKey>) -> Self {
+    fn new(shared_secret: Key, peer_verifying_key: Option<VerifyingKey>) -> Result<Self> {
         // 初始化：使用共享密钥作为根密钥，并派生初始链密钥
-        let (root, chain) = kdf_rk(&shared_secret, b"init");
-        Self {
+        let (root, chain) = kdf_rk(&shared_secret, b"init")?;
+        Ok(Self {
             _root_key: root,
             send_chain_key: chain, // 简化：初始双方对称，实际需区分 Initiator/Responder
             recv_chain_key: chain,
             send_ratchet_counter: 0,
             peer_verifying_key,
-        }
+        })
     }
 }
 
@@ -89,27 +89,27 @@ impl Default for CryptoEngine {
 }
 
 /// 密钥派生函数 (Root Key KDF)
-fn kdf_rk(rk: &Key, info: &[u8]) -> (Key, Key) {
+fn kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
     let hk = Hkdf::<Sha256>::new(Some(rk), info);
     let mut okm = [0u8; 64];
-    hk.expand(&[], &mut okm).expect("HKDF expand failed");
+    hk.expand(&[], &mut okm).map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
     let mut new_rk = [0u8; 32];
     let mut new_ck = [0u8; 32];
     new_rk.copy_from_slice(&okm[0..32]);
     new_ck.copy_from_slice(&okm[32..64]);
-    (new_rk, new_ck)
+    Ok((new_rk, new_ck))
 }
 
 /// 链密钥派生函数 (Chain Key KDF) -> (Next Chain Key, Message Key)
-fn kdf_ck(ck: &Key) -> (Key, Key) {
+fn kdf_ck(ck: &Key) -> Result<(Key, Key)> {
     let hk = Hkdf::<Sha256>::new(Some(ck), b"message_key");
     let mut okm = [0u8; 64];
-    hk.expand(&[], &mut okm).expect("HKDF expand failed");
+    hk.expand(&[], &mut okm).map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
     let mut next_ck = [0u8; 32];
     let mut msg_key = [0u8; 32];
     next_ck.copy_from_slice(&okm[0..32]);
     msg_key.copy_from_slice(&okm[32..64]);
-    (next_ck, msg_key)
+    Ok((next_ck, msg_key))
 }
 
 pub struct CryptoEngine {
@@ -146,7 +146,8 @@ impl CryptoEngine {
         let mut session_data = Vec::new();
         for entry in self.sessions.iter() {
             let device_id = *entry.key();
-            let session = entry.value().lock().unwrap();
+            let session = entry.value().lock()
+                .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
             let serialized = serde_json::to_vec(&*session)
                 .map_err(|e| XPushError::CryptoError(format!("Failed to serialize session: {}", e)))?;
             session_data.push((device_id, serialized));
@@ -180,11 +181,21 @@ impl CryptoEngine {
         })
     }
 
+    /// 清理所有会话，防止内存泄漏 - use proper entry removal to avoid DashMap fragmentation
+    pub fn clear_sessions(&self) {
+        // Remove sessions entries one by one to avoid fragmentation
+        let session_keys: Vec<_> = self.sessions.iter().map(|entry| entry.key().clone()).collect();
+        for device_id in session_keys {
+            self.sessions.remove(&device_id);
+        }
+    }
+
     /// 建立会话（模拟 X3DH 的最后一步）
-    pub fn establish_session(&self, peer_id: DeviceId, peer_public: PublicKey) {
+    pub fn establish_session(&self, peer_id: DeviceId, peer_public: PublicKey) -> Result<()> {
         let shared_secret = self.static_secret.diffie_hellman(&peer_public);
-        let session = SessionState::new(*shared_secret.as_bytes(), None);
+        let session = SessionState::new(*shared_secret.as_bytes(), None)?;
         self.sessions.insert(peer_id, Mutex::new(session));
+        Ok(())
     }
 
     /// 建立带身份验证的会话
@@ -193,10 +204,11 @@ impl CryptoEngine {
         peer_id: DeviceId,
         peer_public: PublicKey,
         peer_verifying_key: VerifyingKey,
-    ) {
+    ) -> Result<()> {
         let shared_secret = self.static_secret.diffie_hellman(&peer_public);
-        let session = SessionState::new(*shared_secret.as_bytes(), Some(peer_verifying_key));
+        let session = SessionState::new(*shared_secret.as_bytes(), Some(peer_verifying_key))?;
         self.sessions.insert(peer_id, Mutex::new(session));
+        Ok(())
     }
 
     /// 对数据进行签名
@@ -209,7 +221,7 @@ impl CryptoEngine {
         let session_guard = self.sessions
             .get(peer_id)
             .ok_or(XPushError::CryptoError("Session not established".into()))?;
-        let session = session_guard.lock().unwrap();
+        let session = session_guard.lock().map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
 
         let verifying_key = session.peer_verifying_key
             .ok_or(XPushError::CryptoError("No verifying key for peer".into()))?;
@@ -226,10 +238,10 @@ impl CryptoEngine {
         let session_guard = self.sessions
             .get(peer_id)
             .ok_or(XPushError::CryptoError("Session not established".into()))?;
-        let mut session = session_guard.lock().unwrap();
+        let mut session = session_guard.lock().map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
 
         // 1. 棘轮步进：生成消息密钥
-        let (next_ck, msg_key) = kdf_ck(&session.send_chain_key);
+        let (next_ck, msg_key) = kdf_ck(&session.send_chain_key)?;
         session.send_chain_key = next_ck;
         session.send_ratchet_counter += 1;
 
@@ -260,11 +272,11 @@ impl CryptoEngine {
         let session_guard = self.sessions
             .get(peer_id)
             .ok_or(XPushError::CryptoError("Session not established".into()))?;
-        let mut session = session_guard.lock().unwrap();
+        let mut session = session_guard.lock().map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
 
         // 1. 棘轮步进：生成消息密钥
         // 注意：真实实现需要处理乱序消息（保存跳过的 Message Keys），这里简化为必须顺序接收
-        let (next_ck, msg_key) = kdf_ck(&session.recv_chain_key);
+        let (next_ck, msg_key) = kdf_ck(&session.recv_chain_key)?;
         session.recv_chain_key = next_ck;
 
         // 2. 解密
