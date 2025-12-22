@@ -110,4 +110,21 @@ impl MetricsCollector {
         // 在实际生产中，这里可以异步发送到分析服务器或存入本地高性能缓冲区
         log::info!("Analytics Event: {:?}", event);
     }
+
+    /// 清理所有指标数据 - use proper entry removal to avoid DashMap fragmentation
+    pub fn clear(&self) {
+        // Remove channel_usage entries one by one to avoid fragmentation
+        let channel_keys: Vec<_> = self.channel_usage.iter().map(|entry| entry.key().clone()).collect();
+        for channel_type in channel_keys {
+            self.channel_usage.remove(&channel_type);
+        }
+
+        // Remove last_rtt entries one by one to avoid fragmentation
+        let device_keys: Vec<_> = self.last_rtt.iter().map(|entry| entry.key().clone()).collect();
+        for device_id in device_keys {
+            self.last_rtt.remove(&device_id);
+        }
+
+        log::debug!("MetricsCollector: Cleared all metrics data using entry removal");
+    }
 }

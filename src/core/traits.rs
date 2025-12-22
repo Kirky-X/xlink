@@ -15,6 +15,18 @@ pub trait Channel: Send + Sync {
 
     /// Start listening for incoming messages
     async fn start(&self) -> Result<()>;
+
+    /// Start listening for incoming messages with a handler
+    async fn start_with_handler(&self, _handler: std::sync::Arc<dyn MessageHandler>) -> Result<Option<tokio::task::JoinHandle<()>>> {
+        self.start().await?;
+        Ok(None)
+    }
+
+    /// Clear the message handler (for cleanup to prevent memory leaks)
+    async fn clear_handler(&self) -> Result<()> {
+        // Default implementation does nothing
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -38,6 +50,12 @@ pub trait Storage: Send + Sync {
     // 存储空间管理
     async fn get_storage_usage(&self) -> Result<u64>;
     async fn cleanup_storage(&self, target_size_bytes: u64) -> Result<u64>;
+
+    // 索引清理（用于内存泄漏防护）
+    fn clear_indexes(&self);
+
+    // 类型转换支持
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 #[async_trait]
