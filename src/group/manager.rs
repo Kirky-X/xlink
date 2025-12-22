@@ -104,7 +104,10 @@ impl GroupManager {
 
     pub async fn create_group(&self, name: String, initial_members: Vec<DeviceId>) -> Result<Group> {
         let group_id = GroupId::new();
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_secs();
         
         // 初始化 TreeKEM 群组密钥
         let member_keys: Vec<_> = initial_members.iter()
@@ -160,7 +163,10 @@ impl GroupManager {
             XPushError::GroupNotFound(group_id.to_string())
         })?;
 
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_secs();
         
         // 注册新成员公钥到 TreeKEM (如果已有)
         if let Ok(public_key) = self.treekem_engine.get_device_public_key(device_id) {
@@ -235,8 +241,34 @@ impl GroupManager {
         self.groups.get(&group_id).map(|g| g.clone())
     }
 
-    pub async fn get_all_groups(&self) -> Vec<Group> {
-        self.groups.iter().map(|entry| entry.value().clone()).collect()
+    /// 清理所有群组信息，防止内存泄漏 - use proper entry removal to avoid DashMap fragmentation
+    pub fn clear_groups(&self) {
+        // Remove groups entries one by one to avoid fragmentation
+        let group_keys: Vec<_> = self.groups.iter().map(|entry| entry.key().clone()).collect();
+        for group_id in group_keys {
+            self.groups.remove(&group_id);
+        }
+
+        // Remove pending_acks entries one by one to avoid fragmentation
+        let pending_keys: Vec<_> = self.pending_acks.iter().map(|entry| entry.key().clone()).collect();
+        for key in pending_keys {
+            self.pending_acks.remove(&key);
+        }
+
+        // Remove processed_invites entries one by one to avoid fragmentation
+        let invite_keys: Vec<_> = self.processed_invites.iter().map(|entry| entry.key().clone()).collect();
+        for key in invite_keys {
+            self.processed_invites.remove(&key);
+        }
+
+        // TreeKemEngine 可能也需要清理
+        self.treekem_engine.clear_keys();
+
+        // 清理广播结果通知通道
+        if let Ok(mut results) = self.broadcast_results.try_write() {
+            results.clear();
+        }
+        log::info!("GroupManager: Cleared all groups and related data structures using entry removal");
     }
 
     pub async fn broadcast(&self, group_id: GroupId, payload: MessagePayload) -> Result<Uuid> {
@@ -314,7 +346,7 @@ impl GroupManager {
                     payload: encrypted_payload.clone(),
                     timestamp: SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_else(|_| Duration::from_secs(0))
                         .as_secs(),
                     priority,
                     require_ack,
@@ -503,28 +535,74 @@ impl GroupManager {
 
     /// 处理ACK消息
     pub async fn handle_ack(&self, original_msg_id: Uuid, responder: DeviceId) {
-        self.mark_device_success(original_msg_id, responder).await;
-        
-        // 检查是否所有设备都已响应
-        if let Some(status) = self.get_ack_status(original_msg_id).await {
-            let (pending, success, failure) = status;
-            if pending == 0 {
+        let mut completed = false;
+        let mut stats = None;
+
+        if let Some(mut entry) = self.pending_acks.get_mut(&original_msg_id) {
+            let (ref mut pending, ref mut success, ref mut _failure) = *entry;
+
+            if pending.remove(&responder) {
+                success.insert(responder);
+                log::debug!("Device {} acknowledged message {}", responder, original_msg_id);
+            }
+
+            if pending.is_empty() {
+                completed = true;
+                stats = Some((success.clone(), _failure.clone()));
+            }
+        }
+
+        if completed {
+            if let Some((success_set, failure_set)) = stats {
+                let success_count = success_set.len();
+                let failure_count = failure_set.len();
+
                 log::info!("Message {} ACK complete: {} successful, {} failed", 
-                          original_msg_id, success, failure);
+                          original_msg_id, success_count, failure_count);
                 
                 // 清理ACK追踪
                 self.pending_acks.remove(&original_msg_id);
-                
-                // 发送广播结果通知
+
+                // 发送广播结果通知并清理结果通道
                 if let Some(tx) = self.broadcast_results.write().await.remove(&original_msg_id) {
                     let _ = tx.send(BroadcastResult {
                         message_id: original_msg_id,
-                        successful_devices: HashSet::new(), // TODO: 从pending_acks获取
-                        failed_devices: HashSet::new(),
-                        total_attempts: success + failure,
+                        successful_devices: success_set,
+                        failed_devices: failure_set,
+                        total_attempts: success_count + failure_count,
                     }).await;
                 }
             }
+        }
+    }
+
+    /// 清理过期的广播结果通道，防止内存泄漏
+    pub async fn cleanup_expired_broadcast_results(&self) {
+        let mut results = self.broadcast_results.write().await;
+        // 移除所有已完成的广播结果通道（这里简化处理，移除所有）
+        results.clear();
+        log::debug!("Cleaned up {} broadcast result channels", results.len());
+    }
+
+    /// 清理过期的邀请记录，防止内存泄漏
+    pub fn cleanup_expired_invites(&self, max_age_hours: u64) {
+        let current_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let max_age_seconds = max_age_hours * 3600;
+
+        let mut removed_count = 0;
+        self.processed_invites.retain(|_, &mut timestamp| {
+            let should_retain = current_time.saturating_sub(timestamp) < max_age_seconds;
+            if !should_retain {
+                removed_count += 1;
+            }
+            should_retain
+        });
+
+        if removed_count > 0 {
+            log::debug!("Cleaned up {} expired invite records", removed_count);
         }
     }
 
@@ -640,6 +718,7 @@ impl GroupManager {
     }
     
     pub async fn handle_incoming_group_message(&self, message: &Message) -> Result<()> {
+        log::info!("Handling group message: {:?}", message.id);
         if let Some(group_id) = message.group_id {
             // 首先尝试解密消息
             let decrypted_payload = match self.treekem_engine.decrypt_group_message(group_id, &message.payload) {
