@@ -40,8 +40,8 @@ impl HeartbeatManager {
         }
     }
 
-    pub fn start(&mut self) {
-        if self.running_task.is_some() { return; }
+    pub fn start(&mut self) -> Option<JoinHandle<()>> {
+        if self.running_task.is_some() { return None; }
 
         let router = self.router.clone();
         let cap_manager = self.cap_manager.clone();
@@ -52,7 +52,10 @@ impl HeartbeatManager {
             
             loop {
                 interval.tick().await;
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_else(|_| Duration::from_secs(0))
+                    .as_millis() as u64;
 
                 // 遍历所有已知设备
                 let devices = cap_manager.get_all_remote_devices();
@@ -136,16 +139,23 @@ impl HeartbeatManager {
             }
         });
 
-        self.running_task = Some(task);
+        self.running_task = None;
+        Some(task)
     }
 
-    pub async fn handle_heartbeat(&self, msg: &Message) {
+    pub fn stop(&mut self) {
+        // 由于所有权已移交给 SDK 的 background_tasks，这里不再直接 abort
+        // SDK 会统一处理。保留此方法用于兼容性。
+        log::info!("HeartbeatManager stop called (task managed by SDK)");
+    }
+
+    pub async fn handle_heartbeat(&self, message: &Message) {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-        
-        match msg.payload {
+
+        match message.payload {
             MessagePayload::Ping(ts) => {
                 // 回复 Pong
-                let response = Message::new(self.local_device_id, msg.sender, MessagePayload::Pong(ts));
+                let response = Message::new(self.local_device_id, message.sender, MessagePayload::Pong(ts));
                 if let Ok(ch) = self.router.select_channel(&response).await {
                     let _ = ch.send(response).await;
                 }
@@ -154,17 +164,17 @@ impl HeartbeatManager {
                 // 计算 RTT
                 let rtt = (now.saturating_sub(ts)) as u32;
                 // 假设通过 Internet 收到，实际应从 Message 元数据获取接收通道
-                let channel_type = ChannelType::Internet; 
-                
-                if let Some(mut state) = self.cap_manager.get_channel_state(&msg.sender, &channel_type) {
+                let channel_type = ChannelType::Internet;
+
+                if let Some(mut state) = self.cap_manager.get_channel_state(&message.sender, &channel_type) {
                     state.available = true;
                     state.failure_count = 0;
                     state.last_heartbeat = now;
                     // 平滑 RTT 计算 (EWMA)
                     state.rtt_ms = (state.rtt_ms * 7 + rtt * 3) / 10;
-                    
-                    self.cap_manager.update_channel_state(msg.sender, channel_type, state);
-                    log::debug!("Heartbeat success: {} RTT={}ms", msg.sender, rtt);
+
+                    self.cap_manager.update_channel_state(message.sender, channel_type, state);
+                    log::debug!("Heartbeat success: {} RTT={}ms", message.sender, rtt);
                 }
             },
             _ => {}
