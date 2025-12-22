@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use xpush::core::types::{DeviceId, ChannelType};
+use uuid::Uuid;
+use xpush::core::types::{ChannelType, DeviceId};
 use xpush::crypto::engine::CryptoEngine;
 use xpush::router::predictor::RoutePredictor;
-use uuid::Uuid;
 
 fn crypto_benchmark(c: &mut Criterion) {
     let engine = CryptoEngine::new();
@@ -11,7 +11,7 @@ fn crypto_benchmark(c: &mut Criterion) {
 
     // 预先建立会话，否则加密会失败
     let other_public_key = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng));
-    engine.establish_session(device_id, other_public_key);
+    engine.establish_session(device_id, other_public_key).unwrap();
 
     c.bench_function("encrypt_1kb", |b| b.iter(|| {
         engine.encrypt(black_box(&device_id), black_box(&data)).unwrap()
