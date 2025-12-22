@@ -9,14 +9,14 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+// use xpush::router::types::{RoutingStrategy, Target}; // These types don't exist in the codebase
+use std::collections::HashSet;
 use xpush::core::error::Result;
 use xpush::core::traits::{Channel as ChannelTrait, MessageHandler};
 use xpush::core::types::{
-    ChannelType, DeviceCapabilities, DeviceId, DeviceType, Message, MessagePayload, 
+    ChannelType, DeviceCapabilities, DeviceId, DeviceType, Message, MessagePayload,
     NetworkType,
 };
-// use xpush::router::types::{RoutingStrategy, Target}; // These types don't exist in the codebase
-use std::collections::HashSet;
 use xpush::UnifiedPushSDK;
 
 // We need these imports for the TestSdkBuilder
@@ -111,6 +111,7 @@ pub struct TestSdkBuilder {
     device_capabilities: DeviceCapabilities,
     channels: Vec<Arc<dyn ChannelTrait>>,
     network_simulator: Arc<Mutex<Option<NetworkSimulator>>>,
+    storage_path: Option<String>,
 }
 
 impl TestSdkBuilder {
@@ -119,6 +120,7 @@ impl TestSdkBuilder {
             device_capabilities: test_device_capabilities(),
             channels: vec![],
             network_simulator: Arc::new(Mutex::new(None)),
+            storage_path: None,
         }
     }
 
@@ -141,6 +143,11 @@ impl TestSdkBuilder {
         self
     }
 
+    pub fn with_storage_path(mut self, path: String) -> Self {
+        self.storage_path = Some(path);
+        self
+    }
+
     pub fn with_low_battery_mode(self, _enabled: bool) -> Self {
         // This would configure the battery monitor
         self
@@ -157,11 +164,19 @@ impl TestSdkBuilder {
             ));
             channels.push(memory_channel);
         }
-        
-        let sdk = UnifiedPushSDK::new(
-            self.device_capabilities,
-            channels,
-        ).await?;
+
+        let sdk = if let Some(storage_path) = self.storage_path {
+            UnifiedPushSDK::with_storage_path(
+                self.device_capabilities,
+                channels,
+                storage_path,
+            ).await?
+        } else {
+            UnifiedPushSDK::new(
+                self.device_capabilities,
+                channels,
+            ).await?
+        };
         
         // Note: We would need to expose routing strategy setting in the actual SDK
         // For now, this is a placeholder
