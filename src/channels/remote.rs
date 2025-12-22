@@ -1,5 +1,5 @@
 use crate::core::error::Result;
-#[cfg(not(feature = "test_no_external_deps"))]
+#[allow(unused_imports)]
 use crate::core::error::XPushError;
 use crate::core::traits::Channel;
 use crate::core::types::{ChannelState, ChannelType, DeviceId, Message, NetworkType};
@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
 #[cfg(not(feature = "test_no_external_deps"))]
+#[cfg(all(not(feature = "test_no_external_deps"), not(test)))]
 use reqwest;
 
 /// ntfy 远程通道实现
@@ -19,6 +20,8 @@ pub struct RemoteChannel {
     current_server_index: Arc<Mutex<usize>>,
     // 追踪订阅的主题: DeviceId -> Topic
     peer_topics: Arc<Mutex<HashMap<DeviceId, String>>>,
+    // 显式测试模式开关
+    test_mode: bool,
 }
 
 impl RemoteChannel {
@@ -36,6 +39,7 @@ impl RemoteChannel {
             backup_server_urls: backup_urls,
             current_server_index: Arc::new(Mutex::new(0)),
             peer_topics: Arc::new(Mutex::new(HashMap::new())),
+            test_mode: false,
         }
     }
     
@@ -47,7 +51,18 @@ impl RemoteChannel {
             backup_server_urls: backup_urls,
             current_server_index: Arc::new(Mutex::new(0)),
             peer_topics: Arc::new(Mutex::new(HashMap::new())),
+            test_mode: false,
         }
+    }
+
+    /// 设置测试模式
+    pub fn set_test_mode(&mut self, enabled: bool) {
+        self.test_mode = enabled;
+    }
+
+    /// 检查是否处于测试模式
+    fn is_test_mode(&self) -> bool {
+        self.test_mode || cfg!(any(feature = "test_no_external_deps", test))
     }
 
     /// 获取当前使用的服务器URL
@@ -95,16 +110,16 @@ impl Channel for RemoteChannel {
             topics.get(&message.recipient).cloned()
         };
 
-        #[cfg(feature = "test_no_external_deps")]
-        {
+        // 这里的判断逻辑：如果显式开启了 test_mode，或者编译时开启了测试宏
+        if self.is_test_mode() {
             // 测试模式：模拟成功发送，不实际进行HTTP请求
-            let topic = topic.unwrap_or_else(|| message.recipient.to_string());
-            log::info!("[Remote] Mock sending message {} to ntfy topic {} (test mode)", message.id, topic);
-            self.register_peer_topic(message.recipient, topic.clone()).await;
-            Ok(())
+            let topic_str = topic.unwrap_or_else(|| message.recipient.to_string());
+            log::info!("[Remote] Mock sending message {} to ntfy topic {} (test mode)", message.id, topic_str);
+            self.register_peer_topic(message.recipient, topic_str).await;
+            return Ok(());
         }
 
-        #[cfg(not(feature = "test_no_external_deps"))]
+        #[cfg(all(not(feature = "test_no_external_deps"), not(test)))]
         {
             let mut attempts = 0;
             let max_attempts = self.backup_server_urls.len() + 1; // 主服务器 + 所有备用服务器
@@ -163,6 +178,13 @@ impl Channel for RemoteChannel {
                     }
                 }
             }
+        }
+
+        #[cfg(any(feature = "test_no_external_deps", test))]
+        {
+            // 在测试环境下，如果由于某种原因没有进入 is_test_mode 的 if 分支，
+            // 且没有编译实际的 HTTP 请求代码，我们默认返回 Ok(())
+            Ok(())
         }
     }
 

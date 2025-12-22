@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use tokio::task::JoinHandle;
+
 /// A simulated in-memory channel for testing and demonstration.
 /// It simulates network latency and delivery.
 pub struct MemoryChannel {
@@ -12,7 +14,7 @@ pub struct MemoryChannel {
     // Simulate the network: A shared bus where messages are put
     // In a real scenario, this would be a socket or radio interface
     _inbox: Arc<Mutex<Vec<Message>>>,
-    handler: Arc<dyn MessageHandler>,
+    handler: Arc<Mutex<Arc<dyn MessageHandler>>>,
     latency_ms: u64,
     should_fail: Arc<Mutex<bool>>,
     sent_messages: Arc<Mutex<Vec<Message>>>,
@@ -23,7 +25,7 @@ impl MemoryChannel {
         Self {
             channel_type: ChannelType::Lan,
             _inbox: Arc::new(Mutex::new(Vec::new())),
-            handler,
+            handler: Arc::new(Mutex::new(handler)),
             latency_ms,
             should_fail: Arc::new(Mutex::new(false)),
             sent_messages: Arc::new(Mutex::new(Vec::new())),
@@ -51,7 +53,8 @@ impl MemoryChannel {
 
     /// Helper to simulate receiving a message from "outside"
     pub async fn simulate_incoming(&self, message: Message) {
-        if let Err(e) = self.handler.handle_message(message).await {
+        let h = self.handler.lock().await.clone();
+        if let Err(e) = h.handle_message(message).await {
             log::error!("Error handling incoming message: {}", e);
         }
     }
@@ -103,6 +106,21 @@ impl Channel for MemoryChannel {
 
     async fn start(&self) -> Result<()> {
         log::info!("[MemoryChannel] Started listening...");
+        Ok(())
+    }
+
+    async fn start_with_handler(&self, handler: Arc<dyn MessageHandler>) -> Result<Option<JoinHandle<()>>> {
+        log::info!("[MemoryChannel] Started listening with custom handler...");
+        let mut h = self.handler.lock().await;
+        *h = handler;
+        Ok(None)
+    }
+
+    async fn clear_handler(&self) -> Result<()> {
+        log::info!("[MemoryChannel] Clearing message handler...");
+        let mut h = self.handler.lock().await;
+        // Replace with a no-op handler to break the reference cycle
+        *h = Arc::new(crate::channels::dummy::DummyMessageHandler);
         Ok(())
     }
 }
