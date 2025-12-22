@@ -13,16 +13,24 @@ pub struct LocalCapabilityDetector {
 
 impl LocalCapabilityDetector {
     pub fn new(manager: Arc<CapabilityManager>) -> Self {
+        let mut system = System::new();
+        // Only refresh the specific information we need
+        system.refresh_system();
+        system.refresh_memory();
+        system.refresh_cpu();
         Self {
             manager,
-            system: System::new_all(),
+            system,
         }
     }
 
     /// 执行一次完整的本地能力检测并更新 Manager
     pub fn detect_and_update(&mut self) {
         debug!("Starting local capability detection...");
-        self.system.refresh_all();
+        // Only refresh the specific information we need
+        self.system.refresh_system();
+        self.system.refresh_memory();
+        self.system.refresh_cpu();
         
         let old_caps = self.manager.get_local_caps();
         let mut supported_channels = HashSet::new();
