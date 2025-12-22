@@ -148,4 +148,24 @@ impl Router {
             Err(XPushError::NoRouteFound)
         }
     }
+
+    /// 清理路由器中的数据，防止内存泄漏
+    pub async fn clear_channels(&self) {
+        // 清理流量统计
+        self.traffic_stats.lock().unwrap().clear();
+        // 清理路由历史
+        self.route_history.lock().unwrap().clear();
+        log::debug!("Router: Cleared traffic stats and route history");
+    }
+
+    /// 同步清理路由器中的数据，防止内存泄漏（用于Drop）
+    pub fn clear_channels_sync(&self) {
+        // 清理流量统计
+        self.traffic_stats.lock().unwrap().clear();
+        // 清理路由历史
+        self.route_history.lock().unwrap().clear();
+        // 清理通道映射（需要获取可变引用，这在Drop中不可行，所以暂时跳过）
+        // self.channels.clear(); // 无法在Drop中调用，因为需要&mut self
+        log::debug!("Router: Synchronously cleared traffic stats and route history");
+    }
 }
