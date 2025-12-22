@@ -14,7 +14,7 @@ pub mod ffi;
 use crate::capability::manager::CapabilityManager;
 use crate::core::error::Result;
 use crate::core::traits::{Channel, MessageHandler, Storage};
-use crate::core::types::{DeviceCapabilities, DeviceId, Message, MessagePayload};
+use crate::core::types::{ChannelType, DeviceCapabilities, DeviceId, Message, MessagePayload};
 use crate::crypto::engine::CryptoEngine;
 use crate::router::selector::Router;
 
@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 pub struct UnifiedPushSDK {
     device_id: DeviceId,
@@ -52,20 +53,74 @@ pub struct UnifiedPushSDK {
 
     rate_limiter: Arc<DashMap<DeviceId, (Instant, u32)>>,
     metrics: Arc<crate::core::metrics::MetricsCollector>,
+    receive_tasks: Arc<DashMap<ChannelType, JoinHandle<()>>>,
+    background_tasks: Arc<DashMap<String, JoinHandle<()>>>,
     app_rx: Arc<Mutex<mpsc::Receiver<Message>>>,
     app_tx: mpsc::Sender<Message>,
     compliance: Arc<crate::core::types::ComplianceConfig>,
     plugins: Arc<DashMap<String, Arc<dyn crate::core::traits::Plugin>>>,
 }
 
+impl Drop for UnifiedPushSDK {
+    fn drop(&mut self) {
+        log::info!("Dropping UnifiedPush SDK for device {}", self.device_id);
+
+        // 由于 Drop 是同步的，我们只能同步地触发 abort - use proper entry removal
+        let receive_task_keys: Vec<_> = self.receive_tasks.iter().map(|entry| entry.key().clone()).collect();
+        for channel_type in receive_task_keys {
+            if let Some((_, task)) = self.receive_tasks.remove(&channel_type) {
+                task.abort();
+            }
+        }
+
+        let background_task_keys: Vec<_> = self.background_tasks.iter().map(|entry| entry.key().clone()).collect();
+        for task_name in background_task_keys {
+            if let Some((_, task)) = self.background_tasks.remove(&task_name) {
+                task.abort();
+            }
+        }
+
+        // 同步清理加密会话
+        self.crypto.clear_sessions();
+
+        // 同步清理能力管理器中的远程设备信息
+        self.cap_manager.clear_remote_devices();
+
+        // 同步清理群组管理器中的信息
+        self.group_manager.clear_groups();
+
+        // 同步清理流管理器中的信息
+        self.stream_manager.clear_streams();
+
+        // 同步清理存储索引（所有存储类型）
+        self.storage.clear_indexes();
+
+        // 同步清理路由器通道信息
+        self.router.clear_channels_sync();
+
+        // 同步清理指标收集器
+        self.metrics.clear();
+
+        // 清理其他集合 - use proper entry removal to avoid DashMap fragmentation
+        let rate_limiter_keys: Vec<_> = self.rate_limiter.iter().map(|entry| entry.key().clone()).collect();
+        for device_id in rate_limiter_keys {
+            self.rate_limiter.remove(&device_id);
+        }
+
+        let plugin_keys: Vec<_> = self.plugins.iter().map(|entry| entry.key().clone()).collect();
+        for plugin_name in plugin_keys {
+            self.plugins.remove(&plugin_name);
+        }
+    }
+}
+
 struct SdkMessageHandler {
     app_tx: mpsc::Sender<Message>,
-    _storage: Arc<dyn Storage>,
     _crypto: Arc<CryptoEngine>,
-    // 需要处理特殊消息
-    group_manager: Arc<GroupManager>,
-    heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
-    stream_manager: Arc<StreamManager>,
+    // 使用 Weak 引用打破循环引用
+    group_manager: std::sync::Weak<GroupManager>,
+    heartbeat_manager: std::sync::Weak<Mutex<HeartbeatManager>>,
+    stream_manager: std::sync::Weak<StreamManager>,
     // DoS 防护：限制每个设备的连接/消息速率
     rate_limiter: Arc<DashMap<DeviceId, (Instant, u32)>>,
     metrics: Arc<crate::core::metrics::MetricsCollector>,
@@ -75,21 +130,24 @@ struct SdkMessageHandler {
 impl MessageHandler for SdkMessageHandler {
     async fn handle_message(&self, mut message: Message) -> Result<()> {
         // DoS 防护：限制每秒最多 100 条消息
-        let now = Instant::now();
-        let mut rate_entry = self.rate_limiter.entry(message.sender).or_insert((now, 0));
-        let (last_reset, count) = rate_entry.value_mut();
-        
-        if now.duration_since(*last_reset) > Duration::from_secs(1) {
-            *last_reset = now;
-            *count = 1;
-        } else {
-            *count += 1;
-            if *count > 100 {
-                log::warn!("DoS Protection: Rate limit exceeded for device {}", message.sender);
-                return Err(crate::core::error::XPushError::CryptoError("Rate limit exceeded".into()));
+        {
+            let now = Instant::now();
+            let mut rate_entry = self.rate_limiter.entry(message.sender).or_insert((now, 0));
+            let (last_reset, count) = rate_entry.value_mut();
+
+            // 使用饱和计数器和时间窗口优化 DoS 防护，避免时钟回拨导致的问题
+            let duration = now.saturating_duration_since(*last_reset);
+            if duration > Duration::from_secs(1) {
+                *last_reset = now;
+                *count = 1;
+            } else {
+                *count = count.saturating_add(1);
+                if *count > 100 {
+                    log::warn!("DoS Protection: Rate limit exceeded for device {}", message.sender);
+                    return Err(crate::core::error::XPushError::CryptoError("Rate limit exceeded".into()));
+                }
             }
-        }
-        drop(rate_entry);
+        } // 显式释放 DashMap 的 shard 锁，防止后续获取其他锁时产生死锁风险
 
         log::info!("SDK received message: {}", message.id);
         
@@ -98,29 +156,37 @@ impl MessageHandler for SdkMessageHandler {
         // F6: 拦截心跳消息
         match message.payload {
             MessagePayload::Ping(_) | MessagePayload::Pong(_) => {
-                let hb = self.heartbeat_manager.lock().await;
-                hb.handle_heartbeat(&message).await;
+                if let Some(hm) = self.heartbeat_manager.upgrade() {
+                    let hb = hm.lock().await;
+                    hb.handle_heartbeat(&message).await;
+                }
                 return Ok(()); // 心跳消息不透传给 App
             }
             MessagePayload::StreamChunk { stream_id, total_chunks, chunk_index, data, .. } => {
-                        // F8: 拦截流分片
-                match self.stream_manager.handle_chunk(stream_id, total_chunks, chunk_index, data).await {
-                    Ok(Some(full_data)) => {
-                        // 重组完成，替换 payload 传给 App
-                        message.payload = MessagePayload::Binary(full_data);
+                // F8: 拦截流分片
+                if let Some(sm) = self.stream_manager.upgrade() {
+                    match sm.handle_chunk(stream_id, total_chunks, chunk_index, data).await {
+                        Ok(Some(full_data)) => {
+                            // 重组完成，替换 payload 传给 App
+                            message.payload = MessagePayload::Binary(full_data);
+                        }
+                        Ok(None) => {
+                            return Ok(()); // 等待更多分片
+                        }
+                        Err(e) => {
+                            log::error!("Stream reassembly error: {}", e);
+                            return Ok(());
+                        }
                     }
-                    Ok(None) => {
-                        return Ok(()); // 等待更多分片
-                    }
-                    Err(e) => {
-                        log::error!("Stream reassembly error: {}", e);
-                        return Ok(());
-                    }
+                } else {
+                    return Ok(());
                 }
             }
             MessagePayload::GroupInvite { .. } => {
                 // F4: 自动处理群组邀请
-                self.group_manager.as_ref().handle_incoming_group_message(&message).await?;
+                if let Some(gm) = self.group_manager.upgrade() {
+                    gm.as_ref().handle_incoming_group_message(&message).await?;
+                }
                 // 邀请消息同时也透传给 App 通知用户
             }
             _ => {
@@ -142,10 +208,27 @@ impl UnifiedPushSDK {
         config: DeviceCapabilities,
         channels: Vec<Arc<dyn Channel>>,
     ) -> Result<Self> {
+        Self::with_storage_path(config, channels, "storage".to_string()).await
+    }
+
+    pub async fn with_storage_path(
+        config: DeviceCapabilities,
+        channels: Vec<Arc<dyn Channel>>,
+        storage_path: String,
+    ) -> Result<Self> {
+        let storage = Arc::new(crate::storage::file_store::FileStorage::new(&storage_path).await?);
+        Self::with_storage(config, channels, storage).await
+    }
+
+    /// 使用自定义存储实现创建 SDK 实例
+    pub async fn with_storage(
+        config: DeviceCapabilities,
+        channels: Vec<Arc<dyn Channel>>,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Self> {
         let device_id = config.device_id;
         let cap_manager = Arc::new(CapabilityManager::new(config));
         let crypto = Arc::new(CryptoEngine::new());
-        let storage = Arc::new(crate::storage::file_store::FileStorage::new("storage").await?);
         
         let (app_tx, app_rx) = mpsc::channel(100);
 
@@ -165,6 +248,8 @@ impl UnifiedPushSDK {
 
         let rate_limiter = Arc::new(DashMap::new());
         let metrics = Arc::new(crate::core::metrics::MetricsCollector::new());
+        let receive_tasks = Arc::new(DashMap::new());
+        let background_tasks = Arc::new(DashMap::new());
 
         Ok(Self {
             device_id,
@@ -179,6 +264,8 @@ impl UnifiedPushSDK {
             cap_detector,
             rate_limiter,
             metrics,
+            receive_tasks,
+            background_tasks,
             app_rx: Arc::new(Mutex::new(app_rx)),
             app_tx,
             compliance: Arc::new(crate::core::types::ComplianceConfig::default()),
@@ -188,20 +275,58 @@ impl UnifiedPushSDK {
 
     pub async fn start(&self) -> Result<()> {
         log::info!("Starting UnifiedPush SDK for device {}", self.device_id);
-        
+
+        // 确保清理旧任务，防止重复启动导致的泄露
+        self.stop().await;
+
         // 启动时进行崩溃恢复
         match self.recover_from_crash().await {
             Ok(_) => log::info!("Crash recovery completed successfully"),
             Err(e) => log::error!("Crash recovery failed: {}", e),
         }
-        
+
+        // 启动各通道接收任务，并保存 handle 以便后续清理
+        let handler = Arc::new(SdkMessageHandler {
+            app_tx: self.app_tx.clone(),
+            _crypto: self.crypto.clone(),
+            group_manager: Arc::downgrade(&self.group_manager),
+            heartbeat_manager: Arc::downgrade(&self.heartbeat_manager),
+            stream_manager: Arc::downgrade(&self.stream_manager),
+            rate_limiter: self.rate_limiter.clone(),
+            metrics: self.metrics.clone(),
+        });
+
+        for (ctype, channel) in self.router.get_channels() {
+            let channel = channel.clone();
+            let ctype = *ctype;
+            let h = handler.clone();
+
+            match channel.start_with_handler(h).await {
+                Ok(Some(task)) => {
+                    self.receive_tasks.insert(ctype, task);
+                }
+                Ok(None) => {
+                    log::debug!("Channel {:?} started without background task", ctype);
+                }
+                Err(e) => log::error!("Failed to start channel {:?}: {}", ctype, e),
+            }
+        }
+
         // 启动后台服务
-        self.heartbeat_manager.lock().await.start();
-        self.discovery_manager.lock().await.start_discovery();
+        if let Some(task) = self.heartbeat_manager.lock().await.start() {
+            self.background_tasks.insert("heartbeat".to_string(), task);
+        }
+        let (mdns_task, ble_task) = self.discovery_manager.lock().await.start_discovery();
+        if let Some(task) = mdns_task {
+            self.background_tasks.insert("discovery_mdns".to_string(), task);
+        }
+        if let Some(task) = ble_task {
+            self.background_tasks.insert("discovery_ble".to_string(), task);
+        }
         
         // F1: 启动后台能力检测任务
         let detector = self.cap_detector.clone();
-        tokio::spawn(async move {
+        let detector_task = tokio::spawn(async move {
             loop {
                 {
                     if let Ok(mut d) = detector.try_lock() {
@@ -211,11 +336,12 @@ impl UnifiedPushSDK {
                 tokio::time::sleep(Duration::from_secs(30)).await;
             }
         });
+        self.background_tasks.insert("capability_detection".to_string(), detector_task);
 
         // 启动数据保留清理任务
         let storage = self.storage.clone();
         let retention_days = self.compliance.retention_days;
-        tokio::spawn(async move {
+        let cleanup_task = tokio::spawn(async move {
             loop {
                 if retention_days > 0 {
                     match storage.cleanup_old_data(retention_days).await {
@@ -226,6 +352,24 @@ impl UnifiedPushSDK {
                 tokio::time::sleep(Duration::from_secs(24 * 3600)).await; // 每天清理一次
             }
         });
+        self.background_tasks.insert("data_cleanup".to_string(), cleanup_task);
+
+        // 启动内存泄漏防护清理任务
+        let group_manager = self.group_manager.clone();
+        let memory_cleanup_task = tokio::spawn(async move {
+            loop {
+                // 每6小时清理一次过期的邀请记录
+                group_manager.cleanup_expired_invites(24); // 清理24小时前的邀请记录
+
+                // 每12小时清理一次广播结果通道
+                if tokio::time::Instant::now().elapsed().as_secs() % (12 * 3600) == 0 {
+                    group_manager.cleanup_expired_broadcast_results().await;
+                }
+
+                tokio::time::sleep(Duration::from_secs(6 * 3600)).await; // 每6小时检查一次
+            }
+        });
+        self.background_tasks.insert("memory_cleanup".to_string(), memory_cleanup_task);
 
         Ok(())
     }
@@ -253,9 +397,84 @@ impl UnifiedPushSDK {
     }
 
 
+    pub async fn stop(&self) {
+        log::info!("Stopping UnifiedPush SDK for device {}", self.device_id);
+
+        // 停止所有通道接收任务
+        for entry in self.receive_tasks.iter() {
+            entry.value().abort();
+        }
+        self.receive_tasks.clear();
+
+        // 停止所有后台任务
+        for entry in self.background_tasks.iter() {
+            entry.value().abort();
+        }
+        self.background_tasks.clear();
+
+        // 停止后台服务
+        self.heartbeat_manager.lock().await.stop();
+        {
+            let mut dm = self.discovery_manager.lock().await;
+            dm.stop_discovery();
+            dm.clear_cache().await;
+        }
+
+        // 清理加密会话，防止内存泄漏
+        self.crypto.clear_sessions();
+
+        // 清理能力管理器中的远程设备信息，防止内存泄漏
+        self.cap_manager.clear_remote_devices();
+
+        // 清理群组管理器中的信息，防止内存泄漏
+        self.group_manager.clear_groups();
+
+        // 清理流管理器中的信息，防止内存泄漏
+        self.stream_manager.clear_streams();
+
+        // 清理存储索引，防止内存泄漏
+        if let Some(storage) = self.storage.as_any().downcast_ref::<crate::storage::file_store::FileStorage>() {
+            storage.cleanup_indexes();
+        }
+
+        // 显式清理 DashMap
+        self.rate_limiter.clear();
+        self.plugins.clear();
+
+        // 清理指标收集器
+        self.metrics.clear();
+
+        // 清理路由器中的通道引用，防止内存泄漏
+        self.router.clear_channels().await;
+
+        log::info!("UnifiedPush SDK stopped successfully");
+    }
+
     pub async fn send(&self, recipient: DeviceId, payload: MessagePayload) -> Result<()> {
         log::info!("Sending message from {} to {} with payload: {:?}", self.device_id, recipient, payload);
-        
+
+        // DoS 防护：限制发送速率，每秒最多 100 条消息
+        {
+            let now = Instant::now();
+            let mut rate_entry = self.rate_limiter.entry(self.device_id).or_insert((now, 0));
+            let (last_reset, count) = rate_entry.value_mut();
+
+            let duration = now.saturating_duration_since(*last_reset);
+            if duration >= Duration::from_secs(1) {
+                *last_reset = now;
+                *count = 1;
+            } else {
+                *count = count.saturating_add(1);
+                if *count > 100 {
+                    log::warn!("DoS Protection: Send rate limit exceeded for device {}", self.device_id);
+                    return Err(crate::core::error::XPushError::CryptoError("Rate limit exceeded".into()));
+                }
+            }
+        } // 显式释放锁
+
+        // F10: 性能优化 - 增加发送指标记录
+        self.metrics.record_send(ChannelType::Internet, 0); // 提前记录，实际发送后会再次记录准确值
+
         // 检查是否是流式传输
         if let MessagePayload::Binary(data) = &payload {
             if data.len() > 1024 * 32 { // 如果大于 32KB，自动走流式传输
@@ -267,7 +486,9 @@ impl UnifiedPushSDK {
 
         let message = Message::new(self.device_id, recipient, payload);
         log::info!("Created message: {}", message.id);
-        
+
+        // F10: 性能优化 - 对于高频小消息，考虑异步保存存储或批量保存
+        // 这里暂时保持同步保存以确保可靠性，但在高负载下可能是瓶颈
         self.storage.save_message(&message).await?;
         log::info!("Message saved to storage");
         
@@ -287,7 +508,10 @@ impl UnifiedPushSDK {
                         signal_strength: Some(80),
                         network_type: crate::core::types::NetworkType::WiFi,
                         failure_count: 0,
-                        last_heartbeat: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+                        last_heartbeat: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_else(|_| Duration::from_secs(0))
+                            .as_secs(),
                         distance_meters: Some(10.0), // 默认近距离
                     };
                     self.cap_manager.update_channel_state(recipient, *ctype, state);
@@ -302,7 +526,13 @@ impl UnifiedPushSDK {
         match channel.send(message.clone()).await {
             Ok(_) => {
                 log::info!("Message sent successfully");
-                self.metrics.record_send(channel.channel_type(), 0); // 暂时记为0字节，后续可完善
+                // 发送成功，记录字节数
+                let bytes = match &message.payload {
+                    MessagePayload::Text(t) => t.len() as u64,
+                    MessagePayload::Binary(b) => b.len() as u64,
+                    _ => 0,
+                };
+                self.metrics.record_send(channel.channel_type(), bytes);
                 self.storage.remove_message(&message.id).await?;
                 
                 // 发送成功，也从待发送队列中移除（如果存在）
@@ -384,11 +614,10 @@ impl UnifiedPushSDK {
     pub fn get_message_handler(&self) -> Arc<dyn MessageHandler> {
         Arc::new(SdkMessageHandler {
             app_tx: self.app_tx.clone(),
-            _storage: self.storage.clone(),
             _crypto: self.crypto.clone(),
-            group_manager: self.group_manager.clone(),
-            heartbeat_manager: self.heartbeat_manager.clone(),
-            stream_manager: self.stream_manager.clone(),
+            group_manager: Arc::downgrade(&self.group_manager),
+            heartbeat_manager: Arc::downgrade(&self.heartbeat_manager),
+            stream_manager: Arc::downgrade(&self.stream_manager),
             rate_limiter: self.rate_limiter.clone(),
             metrics: self.metrics.clone(),
         })
