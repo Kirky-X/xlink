@@ -124,30 +124,56 @@ impl Storage for MemoryStorage {
             return Ok(0);
         }
 
-        // 内存存储简单清理：清空最旧的数据
+        // 内存存储清理：完全清除DashMap条目以避免碎片化
         let mut removed_size = 0u64;
-        
-        // 清理消息
-        for mut entry in self.messages.iter_mut() {
-            let original_len = entry.len();
-            entry.clear();
-            removed_size += original_len as u64 * std::mem::size_of::<Message>() as u64;
+
+        // 清理消息 - 完全移除条目而不是仅清空
+        let message_keys: Vec<_> = self.messages.iter().map(|entry| *entry.key()).collect();
+        for device_id in message_keys {
+            if let Some((_, messages)) = self.messages.remove(&device_id) {
+                removed_size += messages.len() as u64 * std::mem::size_of::<Message>() as u64;
+            }
         }
-        
-        // 清理待发送消息
-        for mut entry in self.pending_messages.iter_mut() {
-            let original_len = entry.len();
-            entry.clear();
-            removed_size += original_len as u64 * std::mem::size_of::<Message>() as u64;
+
+        // 清理待发送消息 - 完全移除条目
+        let pending_keys: Vec<_> = self.pending_messages.iter().map(|entry| *entry.key()).collect();
+        for device_id in pending_keys {
+            if let Some((_, messages)) = self.pending_messages.remove(&device_id) {
+                removed_size += messages.len() as u64 * std::mem::size_of::<Message>() as u64;
+            }
         }
-        
-        // 清理审计日志
-        for mut entry in self.audit_logs.iter_mut() {
-            let original_len = entry.len();
-            entry.clear();
-            removed_size += original_len as u64 * 100; // 估算每条日志100字节
+
+        // 清理审计日志 - 完全移除条目
+        let audit_keys: Vec<_> = self.audit_logs.iter().map(|entry| entry.key().clone()).collect();
+        for key in audit_keys {
+            if let Some((_, logs)) = self.audit_logs.remove(&key) {
+                removed_size += logs.len() as u64 * 100; // 估算每条日志100字节
+            }
         }
         
         Ok(removed_size)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn clear_indexes(&self) {
+        // 清理所有内存存储中的数据，使用 entry removal 避免 DashMap 碎片化
+        let message_keys: Vec<_> = self.messages.iter().map(|entry| entry.key().clone()).collect();
+        for key in message_keys {
+            self.messages.remove(&key);
+        }
+
+        let pending_keys: Vec<_> = self.pending_messages.iter().map(|entry| entry.key().clone()).collect();
+        for key in pending_keys {
+            self.pending_messages.remove(&key);
+        }
+
+        let audit_keys: Vec<_> = self.audit_logs.iter().map(|entry| entry.key().clone()).collect();
+        for key in audit_keys {
+            self.audit_logs.remove(&key);
+        }
+    }
 }
+

@@ -162,4 +162,13 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
     async fn cleanup_storage(&self, target_size_bytes: u64) -> crate::core::error::Result<u64> {
         self.local_cache.cleanup_storage(target_size_bytes).await
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn clear_indexes(&self) {
+        // 清理本地缓存索引
+        self.local_cache.clear_indexes();
+    }
 }

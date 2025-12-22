@@ -2,12 +2,18 @@ use crate::core::error::{Result, XPushError};
 use crate::core::traits::Storage;
 use crate::core::types::{DeviceId, Message};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 use uuid::Uuid;
 
 pub struct FileStorage {
     base_path: PathBuf,
+    // 消息 ID 到接收者 DeviceId 的索引，用于优化 remove_message 的 O(N) 扫描问题
+    message_index: Arc<DashMap<Uuid, DeviceId>>,
+    // 待发送消息 ID 到发送者 DeviceId 的索引，用于优化 remove_pending_message 的 O(N) 扫描问题
+    pending_index: Arc<DashMap<Uuid, DeviceId>>,
 }
 
 impl FileStorage {
@@ -16,7 +22,88 @@ impl FileStorage {
         if !base_path.exists() {
             fs::create_dir_all(&base_path).await.map_err(XPushError::IoError)?;
         }
-        Ok(Self { base_path })
+
+        let storage = Self {
+            base_path,
+            message_index: Arc::new(DashMap::new()),
+            pending_index: Arc::new(DashMap::new()),
+        };
+
+        storage.rebuild_index().await?;
+        Ok(storage)
+    }
+
+    /// 清理内存索引，防止内存泄漏
+    pub fn clear_indexes(&self) {
+        self.message_index.clear();
+        self.pending_index.clear();
+    }
+
+    /// 彻底清理内存索引，使用entry removal避免内存碎片
+    pub fn cleanup_indexes(&self) {
+        // 使用entry removal而不是clear来避免DashMap内存碎片
+        let message_ids: Vec<Uuid> = self.message_index.iter().map(|entry| *entry.key()).collect();
+        for message_id in message_ids {
+            self.message_index.remove(&message_id);
+        }
+
+        let pending_ids: Vec<Uuid> = self.pending_index.iter().map(|entry| *entry.key()).collect();
+        for pending_id in pending_ids {
+            self.pending_index.remove(&pending_id);
+        }
+    }
+
+    /// 启动时重建内存索引
+    async fn rebuild_index(&self) -> Result<()> {
+        // 重建消息索引
+        let mut entries = fs::read_dir(&self.base_path).await.map_err(XPushError::IoError)?;
+        while let Some(device_entry) = entries.next_entry().await.map_err(XPushError::IoError)? {
+            let path = device_entry.path();
+            if path.is_dir() {
+                let file_name = device_entry.file_name();
+                let dir_name = file_name.to_string_lossy();
+
+                if dir_name == "pending" {
+                    // 处理待发送消息目录
+                    let mut p_entries = fs::read_dir(&path).await.map_err(XPushError::IoError)?;
+                    while let Some(p_device_entry) = p_entries.next_entry().await.map_err(XPushError::IoError)? {
+                        if p_device_entry.path().is_dir() {
+                            let p_file_name = p_device_entry.file_name();
+                            let p_device_id_str = p_file_name.to_string_lossy();
+                            if let Ok(device_id) = p_device_id_str.parse::<DeviceId>() {
+                                let mut msg_entries = fs::read_dir(p_device_entry.path()).await.map_err(XPushError::IoError)?;
+                                while let Some(msg_entry) = msg_entries.next_entry().await.map_err(XPushError::IoError)? {
+                                    let msg_path = msg_entry.path();
+                                    if msg_path.is_file() && msg_path.extension().and_then(|s| s.to_str()) == Some("json") {
+                                        if let Some(file_stem) = msg_path.file_stem().and_then(|s| s.to_str()) {
+                                            if let Ok(message_id) = Uuid::parse_str(file_stem) {
+                                                self.pending_index.insert(message_id, device_id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if dir_name != "audit" {
+                    // 处理普通消息目录
+                    if let Ok(device_id) = dir_name.parse::<DeviceId>() {
+                        let mut msg_entries = fs::read_dir(&path).await.map_err(XPushError::IoError)?;
+                        while let Some(msg_entry) = msg_entries.next_entry().await.map_err(XPushError::IoError)? {
+                            let msg_path = msg_entry.path();
+                            if msg_path.is_file() && msg_path.extension().and_then(|s| s.to_str()) == Some("json") {
+                                if let Some(file_stem) = msg_path.file_stem().and_then(|s| s.to_str()) {
+                                    if let Ok(message_id) = Uuid::parse_str(file_stem) {
+                                        self.message_index.insert(message_id, device_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn get_device_dir(&self, device_id: &DeviceId) -> PathBuf {
@@ -25,6 +112,14 @@ impl FileStorage {
 
     fn get_message_path(&self, device_id: &DeviceId, message_id: &Uuid) -> PathBuf {
         self.get_device_dir(device_id).join(format!("{}.json", message_id))
+    }
+
+    fn get_pending_device_dir(&self, device_id: &DeviceId) -> PathBuf {
+        self.base_path.join("pending").join(device_id.to_string())
+    }
+
+    fn get_pending_message_path(&self, device_id: &DeviceId, message_id: &Uuid) -> PathBuf {
+        self.get_pending_device_dir(device_id).join(format!("{}.json", message_id))
     }
 }
 
@@ -39,6 +134,9 @@ impl Storage for FileStorage {
         let path = self.get_message_path(&message.recipient, &message.id);
         let content = serde_json::to_vec(message).map_err(XPushError::SerializationError)?;
         fs::write(path, content).await.map_err(XPushError::IoError)?;
+
+        // 更新索引
+        self.message_index.insert(message.id, message.recipient);
         Ok(())
     }
 
@@ -65,20 +163,11 @@ impl Storage for FileStorage {
     }
 
     async fn remove_message(&self, message_id: &Uuid) -> Result<()> {
-        // Since we don't know the device_id here easily without scanning (unless we change the trait or storage structure)
-        // We'll scan the base directory. For a real implementation, we might want a better indexing.
-        let mut entries = fs::read_dir(&self.base_path).await.map_err(XPushError::IoError)?;
-        
-        while let Some(device_entry) = entries.next_entry().await.map_err(XPushError::IoError)? {
-            if device_entry.path().is_dir() {
-                let mut msg_entries = fs::read_dir(device_entry.path()).await.map_err(XPushError::IoError)?;
-                while let Some(msg_entry) = msg_entries.next_entry().await.map_err(XPushError::IoError)? {
-                    let path = msg_entry.path();
-                    if path.file_name().and_then(|s| s.to_str()) == Some(&format!("{}.json", message_id)) {
-                        fs::remove_file(path).await.map_err(XPushError::IoError)?;
-                        return Ok(());
-                    }
-                }
+        // 优化：从 O(N) 扫描变为基于索引的 O(1) 定位
+        if let Some((_, device_id)) = self.message_index.remove(message_id) {
+            let path = self.get_message_path(&device_id, message_id);
+            if path.exists() {
+                fs::remove_file(path).await.map_err(XPushError::IoError)?;
             }
         }
         Ok(())
@@ -143,24 +232,22 @@ impl Storage for FileStorage {
     }
 
     async fn save_pending_message(&self, message: &Message) -> Result<()> {
-        let pending_dir = self.base_path.join("pending");
-        if !pending_dir.exists() {
-            fs::create_dir_all(&pending_dir).await.map_err(XPushError::IoError)?;
-        }
-
-        let device_dir = pending_dir.join(message.recipient.to_string());
+        let device_dir = self.get_pending_device_dir(&message.sender);
         if !device_dir.exists() {
             fs::create_dir_all(&device_dir).await.map_err(XPushError::IoError)?;
         }
 
-        let path = device_dir.join(format!("{}.json", message.id));
+        let path = self.get_pending_message_path(&message.sender, &message.id);
         let content = serde_json::to_vec(message).map_err(XPushError::SerializationError)?;
         fs::write(path, content).await.map_err(XPushError::IoError)?;
+
+        // 更新索引
+        self.pending_index.insert(message.id, message.sender);
         Ok(())
     }
 
     async fn get_pending_messages_for_recovery(&self, device_id: &DeviceId) -> Result<Vec<Message>> {
-        let pending_dir = self.base_path.join("pending").join(device_id.to_string());
+        let pending_dir = self.get_pending_device_dir(device_id);
         if !pending_dir.exists() {
             return Ok(Vec::new());
         }
@@ -182,22 +269,11 @@ impl Storage for FileStorage {
     }
 
     async fn remove_pending_message(&self, message_id: &uuid::Uuid) -> Result<()> {
-        let pending_dir = self.base_path.join("pending");
-        if !pending_dir.exists() {
-            return Ok(());
-        }
-
-        let mut entries = fs::read_dir(&pending_dir).await.map_err(XPushError::IoError)?;
-        while let Some(device_entry) = entries.next_entry().await.map_err(XPushError::IoError)? {
-            if device_entry.path().is_dir() {
-                let mut msg_entries = fs::read_dir(device_entry.path()).await.map_err(XPushError::IoError)?;
-                while let Some(msg_entry) = msg_entries.next_entry().await.map_err(XPushError::IoError)? {
-                    let path = msg_entry.path();
-                    if path.file_name().and_then(|s| s.to_str()) == Some(&format!("{}.json", message_id)) {
-                        fs::remove_file(path).await.map_err(XPushError::IoError)?;
-                        return Ok(());
-                    }
-                }
+        // 优化：从 O(N) 扫描变为基于索引的 O(1) 定位
+        if let Some((_, device_id)) = self.pending_index.remove(message_id) {
+            let path = self.get_pending_message_path(&device_id, message_id);
+            if path.exists() {
+                fs::remove_file(path).await.map_err(XPushError::IoError)?;
             }
         }
         Ok(())
@@ -260,5 +336,22 @@ impl Storage for FileStorage {
         }
         
         Ok(removed_size)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn clear_indexes(&self) {
+        // 清理内存索引，使用 entry removal 避免 DashMap 碎片化
+        let message_keys: Vec<_> = self.message_index.iter().map(|entry| entry.key().clone()).collect();
+        for message_id in message_keys {
+            self.message_index.remove(&message_id);
+        }
+
+        let pending_keys: Vec<_> = self.pending_index.iter().map(|entry| entry.key().clone()).collect();
+        for message_id in pending_keys {
+            self.pending_index.remove(&message_id);
+        }
     }
 }
