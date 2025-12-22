@@ -27,56 +27,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     struct DemoHandler;
     #[async_trait::async_trait]
     impl xpush::core::traits::MessageHandler for DemoHandler {
-        async fn handle_message(&self, _msg: xpush::core::types::Message) -> xpush::core::error::Result<()> {
+        async fn handle_message(
+            &self,
+            _msg: xpush::core::types::Message,
+        ) -> xpush::core::error::Result<()> {
             Ok(())
         }
     }
-    
+
     let mem_channel = Arc::new(MemoryChannel::new(Arc::new(DemoHandler), 50));
     let sdk = UnifiedPushSDK::new(caps, vec![mem_channel.clone()]).await?;
     sdk.start().await?;
 
     // 2. Setup a target device
     let target_id = DeviceId::new();
-    sdk.capability_manager().register_remote_device(DeviceCapabilities {
-        device_id: target_id,
-        device_type: DeviceType::Smartphone,
-        device_name: "Target Phone".to_string(),
-        supported_channels: HashSet::from([ChannelType::BluetoothLE, ChannelType::Lan]),
-        battery_level: Some(100),
-        is_charging: true,
-        data_cost_sensitive: false,
-    });
+    sdk.capability_manager()
+        .register_remote_device(DeviceCapabilities {
+            device_id: target_id,
+            device_type: DeviceType::Smartphone,
+            device_name: "Target Phone".to_string(),
+            supported_channels: HashSet::from([ChannelType::BluetoothLE, ChannelType::Lan]),
+            battery_level: Some(100),
+            is_charging: true,
+            data_cost_sensitive: false,
+        });
 
     // 3. Scenario: Bluetooth is fast but WiFi is available
     log::info!("--- Scenario 1: Both channels available, selecting best ---");
-    sdk.capability_manager().update_channel_state(target_id, ChannelType::BluetoothLE, ChannelState {
-        available: true,
-        rtt_ms: 50,
-        ..Default::default()
-    });
-    sdk.capability_manager().update_channel_state(target_id, ChannelType::Lan, ChannelState {
-        available: true,
-        rtt_ms: 10,
-        ..Default::default()
-    });
+    sdk.capability_manager().update_channel_state(
+        target_id,
+        ChannelType::BluetoothLE,
+        ChannelState {
+            available: true,
+            rtt_ms: 50,
+            ..Default::default()
+        },
+    );
+    sdk.capability_manager().update_channel_state(
+        target_id,
+        ChannelType::Lan,
+        ChannelState {
+            available: true,
+            rtt_ms: 10,
+            ..Default::default()
+        },
+    );
 
     log::info!("Sending message via best channel...");
-    sdk.send(target_id, MessagePayload::Text("Message 1".to_string())).await?;
-    
+    sdk.send(target_id, MessagePayload::Text("Message 1".to_string()))
+        .await?;
+
     // 5. 查看流量统计
     let stats = sdk.router().get_traffic_stats();
     log::info!("Traffic statistics: {:?}", stats);
 
     // 4. Scenario: LAN fails, switching to Bluetooth
     log::info!("--- Scenario 2: LAN fails, automatic switching to Bluetooth ---");
-    sdk.capability_manager().update_channel_state(target_id, ChannelType::Lan, ChannelState {
-        available: false,
-        ..Default::default()
-    });
+    sdk.capability_manager().update_channel_state(
+        target_id,
+        ChannelType::Lan,
+        ChannelState {
+            available: false,
+            ..Default::default()
+        },
+    );
 
     log::info!("Sending message via fallback channel...");
-    sdk.send(target_id, MessagePayload::Text("Message 2".to_string())).await?;
+    sdk.send(target_id, MessagePayload::Text("Message 2".to_string()))
+        .await?;
 
     // 5. Scenario: Data cost sensitivity
     log::info!("--- Scenario 3: Cost sensitive mode ---");

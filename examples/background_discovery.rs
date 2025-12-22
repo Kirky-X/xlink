@@ -3,9 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use xpush::channels::memory::MemoryChannel;
-use xpush::core::types::{
-    DeviceCapabilities, DeviceId, DeviceType, ChannelType
-};
+use xpush::core::types::{ChannelType, DeviceCapabilities, DeviceId, DeviceType};
 use xpush::UnifiedPushSDK;
 
 #[tokio::main]
@@ -27,11 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     struct DemoHandler;
     #[async_trait::async_trait]
     impl xpush::core::traits::MessageHandler for DemoHandler {
-        async fn handle_message(&self, _msg: xpush::core::types::Message) -> xpush::core::error::Result<()> {
+        async fn handle_message(
+            &self,
+            _msg: xpush::core::types::Message,
+        ) -> xpush::core::error::Result<()> {
             Ok(())
         }
     }
-    
+
     let mem_channel = Arc::new(MemoryChannel::new(Arc::new(DemoHandler), 0));
     let sdk = UnifiedPushSDK::new(caps, vec![mem_channel.clone()]).await?;
     sdk.start().await?;
@@ -41,15 +42,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Simulate Background Discovery
     // This would normally be triggered by OS-level BLE/WiFi scan results
     let discovered_device_id = DeviceId::new();
-    log::info!("Simulating background discovery of device: {}...", discovered_device_id);
-    
+    log::info!(
+        "Simulating background discovery of device: {}...",
+        discovered_device_id
+    );
+
     // Call the background discovery simulation interface
-    sdk.simulate_background_discovery(discovered_device_id).await?;
+    sdk.simulate_background_discovery(discovered_device_id)
+        .await?;
 
     // 3. Verify Discovery
     sleep(Duration::from_millis(100)).await;
-    if let Some(caps) = sdk.capability_manager().get_remote_device(discovered_device_id) {
-        log::info!("Discovered device: {}, type: {:?}", caps.device_name, caps.device_type);
+    if let Some(caps) = sdk
+        .capability_manager()
+        .get_remote_device(discovered_device_id)
+    {
+        log::info!(
+            "Discovered device: {}, type: {:?}",
+            caps.device_name,
+            caps.device_type
+        );
     } else {
         log::error!("Failed to discover device in background simulation.");
     }

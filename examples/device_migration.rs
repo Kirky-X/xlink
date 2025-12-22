@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use xpush::channels::memory::MemoryChannel;
-use xpush::core::types::{
-    DeviceCapabilities, DeviceId, DeviceType, ChannelType
-};
+use xpush::core::types::{ChannelType, DeviceCapabilities, DeviceId, DeviceType};
 use xpush::UnifiedPushSDK;
 
 #[tokio::main]
@@ -25,11 +23,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     struct DemoHandler;
     #[async_trait::async_trait]
     impl xpush::core::traits::MessageHandler for DemoHandler {
-        async fn handle_message(&self, _msg: xpush::core::types::Message) -> xpush::core::error::Result<()> {
+        async fn handle_message(
+            &self,
+            _msg: xpush::core::types::Message,
+        ) -> xpush::core::error::Result<()> {
             Ok(())
         }
     }
-    
+
     let mem_channel = Arc::new(MemoryChannel::new(Arc::new(DemoHandler), 0));
     let sdk_old = UnifiedPushSDK::new(caps.clone(), vec![mem_channel.clone()]).await?;
     sdk_old.start().await?;
