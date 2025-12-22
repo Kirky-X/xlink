@@ -372,8 +372,7 @@ pub struct StreamManager {
 impl StreamManager {
     // F8: 处理接收到的流分片
     pub async fn handle_chunk(&self, stream_id: Uuid, total_chunks: u32, chunk_index: u32, data: Vec<u8>) -> Result<Option<Vec<u8>>> {
-        let mut full_data_to_return = None;
-
+        let is_complete;
         {
             let mut sessions = self.sessions.lock().unwrap();
             
@@ -385,12 +384,22 @@ impl StreamManager {
             session.received_chunks.insert(chunk_index, data);
             session.last_activity = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-            log::info!("Received chunk {}/{} for stream {}", chunk_index + 1, total_chunks, stream_id);
+            log::debug!("Received chunk {}/{} for stream {}", chunk_index + 1, total_chunks, stream_id);
 
-            // 检查是否所有分片都已接收
-            if session.received_chunks.len() as u32 == session.total_chunks {
+            is_complete = session.received_chunks.len() as u32 == session.total_chunks;
+        }
+
+        // 检查是否所有分片都已接收
+        if is_complete {
+            let session_opt;
+            {
+                let mut sessions = self.sessions.lock().unwrap();
+                session_opt = sessions.remove(&stream_id);
+            }
+
+            if let Some(mut session) = session_opt {
                 // 重组数据
-                let mut full_data = Vec::new();
+                let mut full_data = Vec::with_capacity(session.total_chunks as usize * 1024 * 32);
                 for i in 0..session.total_chunks {
                     if let Some(chunk) = session.received_chunks.remove(&i) {
                         full_data.extend_from_slice(&chunk);
@@ -399,15 +408,12 @@ impl StreamManager {
                     }
                 }
                 
-                // 清理会话
-                sessions.remove(&stream_id);
-                
                 log::info!("Stream {} reassembled successfully ({} chunks, {} bytes)", stream_id, total_chunks, full_data.len());
-                full_data_to_return = Some(full_data);
+                return Ok(Some(full_data));
             }
         }
-        
-        Ok(full_data_to_return)
+
+        Ok(None)
     }
 
     pub fn new(local_device_id: DeviceId, router: Arc<Router>) -> Self {
@@ -957,5 +963,15 @@ impl StreamManager {
                 true
             }
         });
+    }
+
+    /// 清理所有活动流，防止内存泄漏
+    pub fn clear_streams(&self) {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.clear();
+        let mut controllers = self.controllers.lock().unwrap();
+        controllers.clear();
+        let mut bitrate_controllers = self.bitrate_controllers.lock().unwrap();
+        bitrate_controllers.clear();
     }
 }
