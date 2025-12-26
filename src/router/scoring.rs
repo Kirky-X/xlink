@@ -1,4 +1,6 @@
-use crate::core::types::{ChannelState, ChannelType, DeviceCapabilities, MessagePriority, NetworkType};
+use crate::core::types::{
+    ChannelState, ChannelType, DeviceCapabilities, MessagePriority, NetworkType,
+};
 
 pub struct Scorer;
 
@@ -30,16 +32,19 @@ impl Scorer {
             // F10: 增强功耗感知 - 结合电池电量调整得分
             let battery_factor = device_caps.battery_level.unwrap_or(100) as f64 / 100.0;
             match power_cost {
-                1 => 1.0, // BLE
+                1 => 1.0,                                // BLE
                 2 => 0.8 * (0.5 + 0.5 * battery_factor), // Mesh / Lan
-                3 => 0.6 * battery_factor, // WiFi Direct
-                _ => 0.4 * battery_factor, // Internet
+                3 => 0.6 * battery_factor,               // WiFi Direct
+                _ => 0.4 * battery_factor,               // Internet
             }
         };
 
         // 4. Cost Score (F9: Cost Aware Routing)
         let cost_score = match state.network_type {
-            NetworkType::WiFi | NetworkType::Ethernet | NetworkType::Loopback | NetworkType::Bluetooth => 1.0, // 免费/本地
+            NetworkType::WiFi
+            | NetworkType::Ethernet
+            | NetworkType::Loopback
+            | NetworkType::Bluetooth => 1.0, // 免费/本地
             NetworkType::Cellular4G | NetworkType::Cellular5G => {
                 if device_caps.data_cost_sensitive {
                     0.1 // 敏感模式下，尽量避免使用蜂窝网络
@@ -58,11 +63,11 @@ impl Scorer {
             MessagePriority::Low => (0.1, 0.2, 0.3, 0.4), // 低优先级消息看重成本和功耗
         };
 
-        let final_score = (latency_score * w_lat) 
-                        + (reliability_score * w_rel) 
-                        + (power_score * w_pow)
-                        + (cost_score * w_cost);
-        
+        let final_score = (latency_score * w_lat)
+            + (reliability_score * w_rel)
+            + (power_score * w_pow)
+            + (cost_score * w_cost);
+
         // Clamp to 0.0 - 1.0
         final_score.clamp(0.0, 1.0)
     }

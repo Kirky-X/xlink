@@ -14,8 +14,7 @@ use std::collections::HashSet;
 use xpush::core::error::Result;
 use xpush::core::traits::{Channel as ChannelTrait, MessageHandler};
 use xpush::core::types::{
-    ChannelType, DeviceCapabilities, DeviceId, DeviceType, Message, MessagePayload,
-    NetworkType,
+    ChannelType, DeviceCapabilities, DeviceId, DeviceType, Message, MessagePayload, NetworkType,
 };
 use xpush::UnifiedPushSDK;
 
@@ -134,8 +133,6 @@ impl TestSdkBuilder {
         self
     }
 
-
-
     pub fn with_network_simulator(self, simulator: NetworkSimulator) -> Self {
         if let Ok(mut guard) = self.network_simulator.try_lock() {
             *guard = Some(simulator);
@@ -155,32 +152,26 @@ impl TestSdkBuilder {
 
     pub async fn build(self) -> Result<UnifiedPushSDK> {
         let mut channels = self.channels;
-        
+
         // Add a default MemoryChannel if no channels are provided
         if channels.is_empty() {
             let memory_channel = Arc::new(xpush::channels::memory::MemoryChannel::new(
                 Arc::new(NoOpMessageHandler),
-                10
+                10,
             ));
             channels.push(memory_channel);
         }
 
         let sdk = if let Some(storage_path) = self.storage_path {
-            UnifiedPushSDK::with_storage_path(
-                self.device_capabilities,
-                channels,
-                storage_path,
-            ).await?
+            UnifiedPushSDK::with_storage_path(self.device_capabilities, channels, storage_path)
+                .await?
         } else {
-            UnifiedPushSDK::new(
-                self.device_capabilities,
-                channels,
-            ).await?
+            UnifiedPushSDK::new(self.device_capabilities, channels).await?
         };
-        
+
         // Note: We would need to expose routing strategy setting in the actual SDK
         // For now, this is a placeholder
-        
+
         Ok(sdk)
     }
 }
@@ -200,14 +191,20 @@ pub async fn assert_message_sent_through_channel(
     expected_payload: &MessagePayload,
 ) {
     let messages = channel.get_sent_messages().await;
-    assert!(!messages.is_empty(), "No messages were sent through the channel");
-    
-    let found = messages.iter().any(|msg| {
-        msg.recipient == expected_recipient && &msg.payload == expected_payload
-    });
-    
-    assert!(found, "Message not found in sent messages. Expected recipient: {:?}, payload: {:?}", 
-            expected_recipient, expected_payload);
+    assert!(
+        !messages.is_empty(),
+        "No messages were sent through the channel"
+    );
+
+    let found = messages
+        .iter()
+        .any(|msg| msg.recipient == expected_recipient && &msg.payload == expected_payload);
+
+    assert!(
+        found,
+        "Message not found in sent messages. Expected recipient: {:?}, payload: {:?}",
+        expected_recipient, expected_payload
+    );
 }
 
 /// Assert that a message was NOT sent through a specific channel
@@ -217,13 +214,18 @@ pub async fn assert_message_not_sent_through_channel(
     expected_payload: &MessagePayload,
 ) {
     let messages = channel.get_sent_messages().await;
-    
-    let found = messages.iter().any(|msg| {
-        msg.recipient == expected_recipient && &msg.payload == expected_payload
-    });
-    
-    assert!(!found, "Message should not have been sent through the channel. Found: {:?}", 
-            messages.iter().find(|msg| msg.recipient == expected_recipient));
+
+    let found = messages
+        .iter()
+        .any(|msg| msg.recipient == expected_recipient && &msg.payload == expected_payload);
+
+    assert!(
+        !found,
+        "Message should not have been sent through the channel. Found: {:?}",
+        messages
+            .iter()
+            .find(|msg| msg.recipient == expected_recipient)
+    );
 }
 
 /// Assert that two device capability sets are equivalent
@@ -249,23 +251,20 @@ where
 }
 
 /// Run an operation multiple times and collect timing statistics
-pub async fn benchmark_operation<F, Fut, R>(
-    mut operation: F,
-    iterations: usize,
-) -> BenchmarkResult
+pub async fn benchmark_operation<F, Fut, R>(mut operation: F, iterations: usize) -> BenchmarkResult
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = R>,
 {
     let mut times = Vec::with_capacity(iterations);
-    
+
     for _ in 0..iterations {
         let (_, duration) = measure_time(&mut operation).await;
         times.push(duration);
     }
-    
+
     times.sort();
-    
+
     BenchmarkResult {
         min: times[0],
         max: times[times.len() - 1],
@@ -334,18 +333,17 @@ impl NetworkSimulator {
             self.latency_range.0
         } else {
             let range = self.latency_range.1 - self.latency_range.0;
-            let random_part = Duration::from_millis(
-                rand::random::<u64>() % range.as_millis() as u64
-            );
+            let random_part =
+                Duration::from_millis(rand::random::<u64>() % range.as_millis() as u64);
             self.latency_range.0 + random_part
         };
-        
+
         tokio::time::sleep(latency).await;
 
         // Simulate packet loss
         if rand::random::<f64>() < self.packet_loss_rate {
             return Err(xpush::core::error::XPushError::ChannelError(
-                "Simulated packet loss".to_string()
+                "Simulated packet loss".to_string(),
             ));
         }
 
@@ -359,10 +357,14 @@ impl NetworkSimulator {
     }
 
     // Simulated network behavior
-    pub async fn simulate_network_condition(&self, delay: Duration, failure_rate: f64) -> Result<()> {
+    pub async fn simulate_network_condition(
+        &self,
+        delay: Duration,
+        failure_rate: f64,
+    ) -> Result<()> {
         if failure_rate > 0.0 && rand::random::<f64>() < failure_rate {
             return Err(xpush::core::error::XPushError::ChannelError(
-                "Simulated network failure".to_string()
+                "Simulated network failure".to_string(),
             ));
         }
         tokio::time::sleep(delay).await;
@@ -381,7 +383,7 @@ pub struct TestEnvironment {
 impl TestEnvironment {
     pub async fn new(device_count: usize) -> Result<Self> {
         let mut devices = Vec::with_capacity(device_count);
-        
+
         for i in 0..device_count {
             let capabilities = DeviceCapabilities {
                 device_id: DeviceId(Uuid::new_v4()),
@@ -392,13 +394,14 @@ impl TestEnvironment {
                 is_charging: false,
                 data_cost_sensitive: false,
             };
-            
+
             let handler = Arc::new(NoOpMessageHandler);
-            let channel = Arc::new(MemoryChannel::new(handler, 10).with_type(ChannelType::BluetoothLE));
+            let channel =
+                Arc::new(MemoryChannel::new(handler, 10).with_type(ChannelType::BluetoothLE));
             let sdk = UnifiedPushSDK::new(capabilities, vec![channel]).await?;
             devices.push(Arc::new(sdk));
         }
-        
+
         Ok(Self {
             devices,
             network_simulator: NetworkSimulator::perfect(),
@@ -417,7 +420,8 @@ impl TestEnvironment {
     }
 
     pub fn find_device_by_id(&self, device_id: &DeviceId) -> Option<Arc<UnifiedPushSDK>> {
-        self.devices.iter()
+        self.devices
+            .iter()
             .find(|device| device.device_id() == *device_id)
             .cloned()
     }
@@ -446,7 +450,7 @@ pub async fn establish_device_sessions(devices: &[&xpush::UnifiedPushSDK]) -> Re
                 let device_id = devices[j].device_id();
                 let public_key = devices[j].public_key();
                 devices[i].register_device_key(device_id, public_key)?;
-                
+
                 // Also register channel state for LAN channel (which is the default in TestSdkBuilder)
                 let channel_state = xpush::core::types::ChannelState {
                     available: true,
@@ -460,10 +464,18 @@ pub async fn establish_device_sessions(devices: &[&xpush::UnifiedPushSDK]) -> Re
                     last_heartbeat: 0,
                     distance_meters: Some(10.0),
                 };
-                
+
                 // Update channel state for both directions
-                devices[i].capability_manager().update_channel_state(device_id, xpush::core::types::ChannelType::Lan, channel_state.clone());
-                devices[j].capability_manager().update_channel_state(devices[i].device_id(), xpush::core::types::ChannelType::Lan, channel_state);
+                devices[i].capability_manager().update_channel_state(
+                    device_id,
+                    xpush::core::types::ChannelType::Lan,
+                    channel_state.clone(),
+                );
+                devices[j].capability_manager().update_channel_state(
+                    devices[i].device_id(),
+                    xpush::core::types::ChannelType::Lan,
+                    channel_state,
+                );
             }
         }
     }

@@ -2,9 +2,9 @@ use crate::core::error::{Result, XPushError};
 use crate::core::traits::Channel;
 use crate::core::types::{ChannelState, ChannelType, DeviceId, Message, NetworkType};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::collections::HashMap;
 
 /// 蓝牙 Mesh 通道实现
 /// 注意：Mesh 通道通常基于 Flooding 或 Routing 机制在 BLE 之上工作
@@ -39,15 +39,22 @@ impl Channel for BluetoothMeshChannel {
         let neighbors = self.neighbors.lock().await;
         if let Some((hops, connected)) = neighbors.get(&message.recipient) {
             if *connected {
-                log::info!("[Bluetooth Mesh] Routing message {} to device {} via {} hops", 
-                    message.id, message.recipient, hops);
+                log::info!(
+                    "[Bluetooth Mesh] Routing message {} to device {} via {} hops",
+                    message.id,
+                    message.recipient,
+                    hops
+                );
                 // 模拟多跳传输成功
                 return Ok(());
             }
         }
-        
+
         // 如果不是直接邻居，Mesh 协议会自动尝试泛洪或路由，此处模拟失败
-        Err(XPushError::ChannelError(format!("Device {} not reachable in Bluetooth Mesh network", message.recipient)))
+        Err(XPushError::ChannelError(format!(
+            "Device {} not reachable in Bluetooth Mesh network",
+            message.recipient
+        )))
     }
 
     async fn check_state(&self, target: &DeviceId) -> Result<ChannelState> {
@@ -57,7 +64,7 @@ impl Channel for BluetoothMeshChannel {
                 available: *connected,
                 rtt_ms: (50 * (*hops as u32)).max(50), // 延迟随跳数增加
                 jitter_ms: 20,
-                packet_loss_rate: 0.1, // Mesh 丢包率通常较高
+                packet_loss_rate: 0.1,  // Mesh 丢包率通常较高
                 bandwidth_bps: 100_000, // Mesh 带宽非常受限 (e.g. 100 kbps)
                 signal_strength: None,
                 distance_meters: None, // Mesh 中距离不直观
@@ -71,7 +78,10 @@ impl Channel for BluetoothMeshChannel {
     }
 
     async fn start(&self) -> Result<()> {
-        log::info!("Bluetooth Mesh channel started for device {}", self.local_device_id);
+        log::info!(
+            "Bluetooth Mesh channel started for device {}",
+            self.local_device_id
+        );
         Ok(())
     }
 }

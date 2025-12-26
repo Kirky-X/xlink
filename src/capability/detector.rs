@@ -1,9 +1,9 @@
-use crate::core::types::{ChannelType, DeviceCapabilities, DeviceType};
 use crate::capability::manager::CapabilityManager;
-use sysinfo::{System, SystemExt};
+use crate::core::types::{ChannelType, DeviceCapabilities, DeviceType};
+use log::{debug, info};
 use std::collections::HashSet;
 use std::sync::Arc;
-use log::{info, debug};
+use sysinfo::{System, SystemExt};
 
 /// 本地能力检测器
 pub struct LocalCapabilityDetector {
@@ -18,10 +18,7 @@ impl LocalCapabilityDetector {
         system.refresh_system();
         system.refresh_memory();
         system.refresh_cpu();
-        Self {
-            manager,
-            system,
-        }
+        Self { manager, system }
     }
 
     /// 执行一次完整的本地能力检测并更新 Manager
@@ -31,7 +28,7 @@ impl LocalCapabilityDetector {
         self.system.refresh_system();
         self.system.refresh_memory();
         self.system.refresh_cpu();
-        
+
         let old_caps = self.manager.get_local_caps();
         let mut supported_channels = HashSet::new();
 
@@ -57,24 +54,29 @@ impl LocalCapabilityDetector {
         let new_caps = DeviceCapabilities {
             device_id: old_caps.device_id,
             device_type,
-            device_name: self.system.host_name().unwrap_or_else(|| "Unknown Device".to_string()),
+            device_name: self
+                .system
+                .host_name()
+                .unwrap_or_else(|| "Unknown Device".to_string()),
             supported_channels,
             battery_level,
             is_charging,
             data_cost_sensitive: false, // 默认不敏感，可以通过配置调整
         };
 
-        info!("Local capabilities detected: {} (Type: {:?}, Channels: {:?})", 
-            new_caps.device_name, new_caps.device_type, new_caps.supported_channels);
+        info!(
+            "Local capabilities detected: {} (Type: {:?}, Channels: {:?})",
+            new_caps.device_name, new_caps.device_type, new_caps.supported_channels
+        );
 
         self.manager.update_local_capabilities(new_caps);
     }
 
     fn detect_lan_support(&self) -> bool {
         // 简单通过是否有非 loopback 的网络接口来判断
-        pnet_datalink::interfaces().iter().any(|iface| {
-            !iface.is_loopback() && iface.is_up() && !iface.ips.is_empty()
-        })
+        pnet_datalink::interfaces()
+            .iter()
+            .any(|iface| !iface.is_loopback() && iface.is_up() && !iface.ips.is_empty())
     }
 
     fn get_battery_info(&self) -> (Option<u8>, bool) {

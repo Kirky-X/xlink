@@ -49,11 +49,16 @@ impl Router {
         let mut stats = self.traffic_stats.lock().unwrap();
         let current = stats.entry(ctype).or_insert(0);
         *current += bytes;
-        
+
         // F10: 流量预警 - 检查是否超过阈值
         if let Some(&threshold) = self.traffic_thresholds.get(&ctype) {
             if *current >= threshold {
-                log::warn!("Traffic threshold exceeded for channel {:?}: current={}, threshold={}", ctype, current, threshold);
+                log::warn!(
+                    "Traffic threshold exceeded for channel {:?}: current={}, threshold={}",
+                    ctype,
+                    current,
+                    threshold
+                );
                 // 实际生产中这里可能会触发事件或回调
             }
         }
@@ -83,7 +88,8 @@ impl Router {
             *counts.entry(ctype).or_insert(0) += 1;
         }
 
-        counts.into_iter()
+        counts
+            .into_iter()
             .max_by_key(|&(_, count)| count)
             .map(|(ctype, _)| ctype)
     }
@@ -91,7 +97,7 @@ impl Router {
     pub async fn select_channel(&self, message: &Message) -> Result<Arc<dyn Channel>> {
         let target = &message.recipient;
         let local_caps = self.cap_manager.get_local_caps();
-        
+
         let mut best_score = -1.0;
         let mut best_channel_type = None;
 
@@ -100,8 +106,10 @@ impl Router {
             if let Some(state) = self.cap_manager.get_channel_state(target, &predicted_ctype) {
                 if state.available {
                     // 如果预测的通道当前可用，则优先考虑
-                    let score = Scorer::score(predicted_ctype, &state, &local_caps, message.priority);
-                    if score > 0.6 { // 只要分数尚可，就直接使用，减少计算开销
+                    let score =
+                        Scorer::score(predicted_ctype, &state, &local_caps, message.priority);
+                    if score > 0.6 {
+                        // 只要分数尚可，就直接使用，减少计算开销
                         best_score = score;
                         best_channel_type = Some(predicted_ctype);
                     }
@@ -115,9 +123,9 @@ impl Router {
                 // Check if we have state info for this target on this channel
                 if let Some(state) = self.cap_manager.get_channel_state(target, ctype) {
                     let score = Scorer::score(*ctype, &state, &local_caps, message.priority);
-                    
+
                     log::debug!("Channel {:?} score: {:.4}", ctype, score);
-                    
+
                     if score > best_score && score > 0.0 {
                         best_score = score;
                         best_channel_type = Some(*ctype);
@@ -128,7 +136,7 @@ impl Router {
 
         if let Some(ctype) = best_channel_type {
             let channel = self.channels.get(&ctype).unwrap().clone();
-            
+
             // 记录消息预计流量
             let bytes = match &message.payload {
                 MessagePayload::Text(t) => t.len() as u64,
@@ -139,10 +147,10 @@ impl Router {
                 _ => 64,
             };
             self.record_traffic(ctype, bytes);
-            
+
             // 记录历史
             self.record_history(*target, ctype);
-            
+
             Ok(channel)
         } else {
             Err(XPushError::NoRouteFound)

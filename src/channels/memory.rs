@@ -68,19 +68,23 @@ impl Channel for MemoryChannel {
 
     async fn send(&self, message: Message) -> Result<()> {
         if *self.should_fail.lock().await {
-            return Err(crate::core::error::XPushError::ChannelError("Simulated failure".into()));
+            return Err(crate::core::error::XPushError::ChannelError(
+                "Simulated failure".into(),
+            ));
         }
-        
+
         // Simulate network delay
         tokio::time::sleep(tokio::time::Duration::from_millis(self.latency_ms)).await;
-        
+
         log::info!(
-            "[MemoryChannel] Transmitting message {} from {} to {}", 
-            message.id, message.sender, message.recipient
+            "[MemoryChannel] Transmitting message {} from {} to {}",
+            message.id,
+            message.sender,
+            message.recipient
         );
 
         self.sent_messages.lock().await.push(message);
-        
+
         Ok(())
     }
 
@@ -109,7 +113,10 @@ impl Channel for MemoryChannel {
         Ok(())
     }
 
-    async fn start_with_handler(&self, handler: Arc<dyn MessageHandler>) -> Result<Option<JoinHandle<()>>> {
+    async fn start_with_handler(
+        &self,
+        handler: Arc<dyn MessageHandler>,
+    ) -> Result<Option<JoinHandle<()>>> {
         log::info!("[MemoryChannel] Started listening with custom handler...");
         let mut h = self.handler.lock().await;
         *h = handler;

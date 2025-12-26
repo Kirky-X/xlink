@@ -1,2 +1,2 @@
-pub mod manager;
 pub mod detector;
+pub mod manager;

@@ -9,10 +9,10 @@ use std::sync::Arc;
 pub trait DistributedStore: Send + Sync {
     /// 上传内容，返回内容哈希 (CID)
     async fn upload(&self, data: &[u8]) -> Result<String>;
-    
+
     /// 根据哈希下载内容
     async fn download(&self, hash: &str) -> Result<Vec<u8>>;
-    
+
     /// 获取存储类型名称 (e.g., "IPFS", "Arweave", "FileSystem")
     fn protocol_name(&self) -> &str;
 }
@@ -26,11 +26,13 @@ impl FileDistributedStore {
     pub async fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let base_path = path.as_ref().to_path_buf();
         if !base_path.exists() {
-            tokio::fs::create_dir_all(&base_path).await.map_err(XPushError::IoError)?;
+            tokio::fs::create_dir_all(&base_path)
+                .await
+                .map_err(XPushError::IoError)?;
         }
         Ok(Self { base_path })
     }
-    
+
     fn compute_hash(data: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -49,7 +51,9 @@ impl DistributedStore for FileDistributedStore {
     async fn upload(&self, data: &[u8]) -> Result<String> {
         let hash = Self::compute_hash(data);
         let path = self.get_path(&hash);
-        tokio::fs::write(path, data).await.map_err(XPushError::IoError)?;
+        tokio::fs::write(path, data)
+            .await
+            .map_err(XPushError::IoError)?;
         log::info!("[DistStore] Uploaded {} bytes, CID: {}", data.len(), hash);
         Ok(hash)
     }
@@ -58,15 +62,19 @@ impl DistributedStore for FileDistributedStore {
         let path = self.get_path(hash);
         if !path.exists() {
             return Err(XPushError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound, 
-                format!("Content not found for hash: {}", hash)
+                std::io::ErrorKind::NotFound,
+                format!("Content not found for hash: {}", hash),
             )));
         }
         let data = tokio::fs::read(path).await.map_err(XPushError::IoError)?;
-        log::info!("[DistStore] Downloaded {} bytes from CID: {}", data.len(), hash);
+        log::info!(
+            "[DistStore] Downloaded {} bytes from CID: {}",
+            data.len(),
+            hash
+        );
         Ok(data)
     }
-    
+
     fn protocol_name(&self) -> &str {
         "FileSystem(IPFS-like)"
     }
@@ -89,12 +97,15 @@ impl DistributedStorageAdapter {
 
 #[async_trait]
 impl crate::core::traits::Storage for DistributedStorageAdapter {
-    async fn save_message(&self, message: &crate::core::types::Message) -> crate::core::error::Result<()> {
+    async fn save_message(
+        &self,
+        message: &crate::core::types::Message,
+    ) -> crate::core::error::Result<()> {
         // 将消息序列化并上传到分布式存储
         let data = serde_json::to_vec(message)
             .map_err(crate::core::error::XPushError::SerializationError)?;
         let hash = self.distributed_store.upload(&data).await?;
-        
+
         // 在本地缓存中保存哈希引用
         let hash_message = crate::core::types::Message {
             id: message.id,
@@ -109,11 +120,14 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
         self.local_cache.save_message(&hash_message).await
     }
 
-    async fn get_pending_messages(&self, device_id: &crate::core::types::DeviceId) -> crate::core::error::Result<Vec<crate::core::types::Message>> {
+    async fn get_pending_messages(
+        &self,
+        device_id: &crate::core::types::DeviceId,
+    ) -> crate::core::error::Result<Vec<crate::core::types::Message>> {
         // 从本地缓存获取哈希引用
         let hash_messages = self.local_cache.get_pending_messages(device_id).await?;
         let mut messages = Vec::new();
-        
+
         // 从分布式存储下载实际消息内容
         for hash_msg in hash_messages {
             if let crate::core::types::MessagePayload::Text(hash) = &hash_msg.payload {
@@ -123,7 +137,7 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
                 messages.push(message);
             }
         }
-        
+
         Ok(messages)
     }
 
@@ -143,15 +157,26 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
         self.local_cache.cleanup_old_data(days).await
     }
 
-    async fn save_pending_message(&self, message: &crate::core::types::Message) -> crate::core::error::Result<()> {
+    async fn save_pending_message(
+        &self,
+        message: &crate::core::types::Message,
+    ) -> crate::core::error::Result<()> {
         self.local_cache.save_pending_message(message).await
     }
 
-    async fn get_pending_messages_for_recovery(&self, device_id: &crate::core::types::DeviceId) -> crate::core::error::Result<Vec<crate::core::types::Message>> {
-        self.local_cache.get_pending_messages_for_recovery(device_id).await
+    async fn get_pending_messages_for_recovery(
+        &self,
+        device_id: &crate::core::types::DeviceId,
+    ) -> crate::core::error::Result<Vec<crate::core::types::Message>> {
+        self.local_cache
+            .get_pending_messages_for_recovery(device_id)
+            .await
     }
 
-    async fn remove_pending_message(&self, message_id: &uuid::Uuid) -> crate::core::error::Result<()> {
+    async fn remove_pending_message(
+        &self,
+        message_id: &uuid::Uuid,
+    ) -> crate::core::error::Result<()> {
         self.local_cache.remove_pending_message(message_id).await
     }
 

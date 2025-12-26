@@ -1,13 +1,13 @@
-use serde::{Deserialize, Serialize};
 use crate::core::error::{Result, XPushError};
 use crate::core::types::DeviceId;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use dashmap::DashMap;
-use ed25519_dalek::{Signature, Signer, Verifier, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::sync::{Arc, Mutex};
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -35,7 +35,10 @@ mod verifying_key_serde {
     use super::*;
     use serde::{Deserializer, Serializer};
 
-    pub fn serialize<S>(key: &Option<VerifyingKey>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    pub fn serialize<S>(
+        key: &Option<VerifyingKey>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -45,15 +48,21 @@ mod verifying_key_serde {
         }
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Option<VerifyingKey>, D::Error>
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> std::result::Result<Option<VerifyingKey>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let opt: Option<Vec<u8>> = Option::deserialize(deserializer)?;
         match opt {
             Some(bytes) => {
-                let bytes: [u8; 32] = bytes.try_into().map_err(|_| serde::de::Error::custom("Invalid length"))?;
-                VerifyingKey::from_bytes(&bytes).map(Some).map_err(|e| serde::de::Error::custom(e.to_string()))
+                let bytes: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| serde::de::Error::custom("Invalid length"))?;
+                VerifyingKey::from_bytes(&bytes)
+                    .map(Some)
+                    .map_err(|e| serde::de::Error::custom(e.to_string()))
             }
             None => Ok(None),
         }
@@ -92,7 +101,8 @@ impl Default for CryptoEngine {
 fn kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
     let hk = Hkdf::<Sha256>::new(Some(rk), info);
     let mut okm = [0u8; 64];
-    hk.expand(&[], &mut okm).map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
+    hk.expand(&[], &mut okm)
+        .map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
     let mut new_rk = [0u8; 32];
     let mut new_ck = [0u8; 32];
     new_rk.copy_from_slice(&okm[0..32]);
@@ -104,7 +114,8 @@ fn kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
 fn kdf_ck(ck: &Key) -> Result<(Key, Key)> {
     let hk = Hkdf::<Sha256>::new(Some(ck), b"message_key");
     let mut okm = [0u8; 64];
-    hk.expand(&[], &mut okm).map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
+    hk.expand(&[], &mut okm)
+        .map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
     let mut next_ck = [0u8; 32];
     let mut msg_key = [0u8; 32];
     next_ck.copy_from_slice(&okm[0..32]);
@@ -146,10 +157,13 @@ impl CryptoEngine {
         let mut session_data = Vec::new();
         for entry in self.sessions.iter() {
             let device_id = *entry.key();
-            let session = entry.value().lock()
+            let session = entry
+                .value()
+                .lock()
                 .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
-            let serialized = serde_json::to_vec(&*session)
-                .map_err(|e| XPushError::CryptoError(format!("Failed to serialize session: {}", e)))?;
+            let serialized = serde_json::to_vec(&*session).map_err(|e| {
+                XPushError::CryptoError(format!("Failed to serialize session: {}", e))
+            })?;
             session_data.push((device_id, serialized));
         }
 
@@ -165,11 +179,12 @@ impl CryptoEngine {
         let static_secret = StaticSecret::from(state.static_secret);
         let public_key = PublicKey::from(&static_secret);
         let signing_key = SigningKey::from_bytes(&state.signing_key);
-        
+
         let sessions = Arc::new(DashMap::new());
         for (device_id, serialized) in state.sessions {
-            let session: SessionState = serde_json::from_slice(&serialized)
-                .map_err(|e| XPushError::CryptoError(format!("Failed to deserialize session: {}", e)))?;
+            let session: SessionState = serde_json::from_slice(&serialized).map_err(|e| {
+                XPushError::CryptoError(format!("Failed to deserialize session: {}", e))
+            })?;
             sessions.insert(device_id, Mutex::new(session));
         }
 
@@ -184,7 +199,7 @@ impl CryptoEngine {
     /// 清理所有会话，防止内存泄漏 - use proper entry removal to avoid DashMap fragmentation
     pub fn clear_sessions(&self) {
         // Remove sessions entries one by one to avoid fragmentation
-        let session_keys: Vec<_> = self.sessions.iter().map(|entry| entry.key().clone()).collect();
+        let session_keys: Vec<_> = self.sessions.iter().map(|entry| *entry.key()).collect();
         for device_id in session_keys {
             self.sessions.remove(&device_id);
         }
@@ -218,27 +233,35 @@ impl CryptoEngine {
 
     /// 验证签名
     pub fn verify(&self, peer_id: &DeviceId, data: &[u8], signature_bytes: &[u8]) -> Result<()> {
-        let session_guard = self.sessions
+        let session_guard = self
+            .sessions
             .get(peer_id)
             .ok_or(XPushError::CryptoError("Session not established".into()))?;
-        let session = session_guard.lock().map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
+        let session = session_guard
+            .lock()
+            .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
 
-        let verifying_key = session.peer_verifying_key
+        let verifying_key = session
+            .peer_verifying_key
             .ok_or(XPushError::CryptoError("No verifying key for peer".into()))?;
 
         let signature = Signature::from_slice(signature_bytes)
             .map_err(|e| XPushError::CryptoError(format!("Invalid signature format: {}", e)))?;
 
-        verifying_key.verify(data, &signature)
+        verifying_key
+            .verify(data, &signature)
             .map_err(|_| XPushError::CryptoError("Signature verification failed".into()))
     }
 
     /// 加密消息并滚动棘轮 (Forward Secrecy)
     pub fn encrypt(&self, peer_id: &DeviceId, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let session_guard = self.sessions
+        let session_guard = self
+            .sessions
             .get(peer_id)
             .ok_or(XPushError::CryptoError("Session not established".into()))?;
-        let mut session = session_guard.lock().map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
+        let mut session = session_guard
+            .lock()
+            .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
 
         // 1. 棘轮步进：生成消息密钥
         let (next_ck, msg_key) = kdf_ck(&session.send_chain_key)?;
@@ -259,7 +282,7 @@ impl CryptoEngine {
         let mut result = Vec::with_capacity(12 + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
-        
+
         Ok(result)
     }
 
@@ -269,10 +292,13 @@ impl CryptoEngine {
             return Err(XPushError::CryptoError("Data too short".into()));
         }
 
-        let session_guard = self.sessions
+        let session_guard = self
+            .sessions
             .get(peer_id)
             .ok_or(XPushError::CryptoError("Session not established".into()))?;
-        let mut session = session_guard.lock().map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
+        let mut session = session_guard
+            .lock()
+            .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
 
         // 1. 棘轮步进：生成消息密钥
         // 注意：真实实现需要处理乱序消息（保存跳过的 Message Keys），这里简化为必须顺序接收

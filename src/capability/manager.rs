@@ -1,7 +1,7 @@
 use crate::core::types::{ChannelState, ChannelType, DeviceCapabilities, DeviceId};
 use dashmap::DashMap;
-use std::sync::{Arc, RwLock};
 use std::collections::HashSet;
+use std::sync::{Arc, RwLock};
 
 /// 能力变化事件类型
 #[derive(Debug, Clone)]
@@ -58,12 +58,21 @@ impl CapabilityManager {
         self.local_capabilities.read().unwrap().clone()
     }
 
-    pub fn update_channel_state(&self, device: DeviceId, channel: ChannelType, state: ChannelState) {
+    pub fn update_channel_state(
+        &self,
+        device: DeviceId,
+        channel: ChannelType,
+        state: ChannelState,
+    ) {
         let device_entry = self.remote_states.entry(device).or_default();
         device_entry.insert(channel, state);
     }
 
-    pub fn get_channel_state(&self, device: &DeviceId, channel: &ChannelType) -> Option<ChannelState> {
+    pub fn get_channel_state(
+        &self,
+        device: &DeviceId,
+        channel: &ChannelType,
+    ) -> Option<ChannelState> {
         self.remote_states
             .get(device)
             .and_then(|map| map.get(channel).map(|v| v.clone()))
@@ -72,19 +81,27 @@ impl CapabilityManager {
     /// 清理所有远程设备信息，防止内存泄漏
     pub fn clear_remote_devices(&self) {
         // Remove remote_states entries one by one to avoid fragmentation
-        let state_keys: Vec<_> = self.remote_states.iter().map(|entry| entry.key().clone()).collect();
+        let state_keys: Vec<_> = self
+            .remote_states
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
         for device_id in state_keys {
             self.remote_states.remove(&device_id);
         }
 
         // Remove remote_caps entries one by one to avoid fragmentation
-        let cap_keys: Vec<_> = self.remote_caps.iter().map(|entry| entry.key().clone()).collect();
+        let cap_keys: Vec<_> = self.remote_caps.iter().map(|entry| *entry.key()).collect();
         for device_id in cap_keys {
             self.remote_caps.remove(&device_id);
         }
 
         // Remove change_handlers entries one by one to avoid fragmentation
-        let handler_keys: Vec<_> = self.change_handlers.iter().map(|entry| entry.key().clone()).collect();
+        let handler_keys: Vec<_> = self
+            .change_handlers
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
         for device_id in handler_keys {
             self.change_handlers.remove(&device_id);
         }
@@ -96,7 +113,9 @@ impl CapabilityManager {
 
     /// 获取指定远程设备的能力
     pub fn get_remote_device(&self, device_id: DeviceId) -> Option<DeviceCapabilities> {
-        self.remote_caps.get(&device_id).map(|entry| entry.value().clone())
+        self.remote_caps
+            .get(&device_id)
+            .map(|entry| entry.value().clone())
     }
 
     /// 获取所有远程设备 ID
@@ -105,18 +124,18 @@ impl CapabilityManager {
     }
 
     /// 注册能力变化监听器
-    /// 
+    ///
     /// # 参数
     /// * `handler_id` - 监听器唯一标识
     /// * `handler` - 能力变化处理函数
-    /// 
+    ///
     /// # 示例
     /// ```rust,no_run
     /// use std::sync::Arc;
     /// use xpush::capability::manager::{CapabilityManager, CapabilityChange};
     /// use xpush::core::types::{DeviceCapabilities, DeviceType, ChannelType, DeviceId};
     /// use std::collections::HashSet;
-    /// 
+    ///
     /// # fn main() {
     /// # let caps = DeviceCapabilities {
     /// #     device_id: DeviceId::new(),
@@ -163,13 +182,13 @@ impl CapabilityManager {
     pub fn update_local_capabilities(&self, new_capabilities: DeviceCapabilities) {
         // 获取当前能力
         let current_capabilities = self.local_capabilities.read().unwrap().clone();
-        
+
         // 检查能力变化
         let changes = self.detect_capability_changes(&current_capabilities, &new_capabilities);
-        
+
         // 更新本地能力
         *self.local_capabilities.write().unwrap() = new_capabilities.clone();
-        
+
         // 通知所有变化
         for change in changes {
             self.notify_capability_change(change);
@@ -177,14 +196,18 @@ impl CapabilityManager {
     }
 
     /// 检测能力变化
-    fn detect_capability_changes(&self, old: &DeviceCapabilities, new: &DeviceCapabilities) -> Vec<CapabilityChange> {
+    fn detect_capability_changes(
+        &self,
+        old: &DeviceCapabilities,
+        new: &DeviceCapabilities,
+    ) -> Vec<CapabilityChange> {
         let mut changes = Vec::new();
         let device_id = new.device_id;
 
         // 检查通道支持变化
         let old_channels: HashSet<_> = old.supported_channels.iter().collect();
         let new_channels: HashSet<_> = new.supported_channels.iter().collect();
-        
+
         // 检查新增的通道
         for &channel in new_channels.difference(&old_channels) {
             changes.push(CapabilityChange::ChannelSupportChanged {
@@ -193,7 +216,7 @@ impl CapabilityManager {
                 supported: true,
             });
         }
-        
+
         // 检查移除的通道
         for &channel in old_channels.difference(&new_channels) {
             changes.push(CapabilityChange::ChannelSupportChanged {

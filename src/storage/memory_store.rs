@@ -72,14 +72,17 @@ impl Storage for MemoryStorage {
         // 内存存储不清理旧数据
         Ok(0)
     }
-    
+
     async fn save_pending_message(&self, message: &Message) -> Result<()> {
         let mut entry = self.pending_messages.entry(message.recipient).or_default();
         entry.push(message.clone());
         Ok(())
     }
 
-    async fn get_pending_messages_for_recovery(&self, device_id: &DeviceId) -> Result<Vec<Message>> {
+    async fn get_pending_messages_for_recovery(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<Vec<Message>> {
         match self.pending_messages.get(device_id) {
             Some(msgs) => Ok(msgs.clone()),
             None => Ok(Vec::new()),
@@ -96,25 +99,25 @@ impl Storage for MemoryStorage {
     async fn get_storage_usage(&self) -> Result<u64> {
         // 内存存储返回估算值
         let mut total_size = 0u64;
-        
+
         for entry in self.messages.iter() {
             for msg in entry.value() {
                 total_size += std::mem::size_of_val(msg) as u64;
             }
         }
-        
+
         for entry in self.pending_messages.iter() {
             for msg in entry.value() {
                 total_size += std::mem::size_of_val(msg) as u64;
             }
         }
-        
+
         for entry in self.audit_logs.iter() {
             for log in entry.value() {
                 total_size += log.len() as u64;
             }
         }
-        
+
         Ok(total_size)
     }
 
@@ -136,7 +139,11 @@ impl Storage for MemoryStorage {
         }
 
         // 清理待发送消息 - 完全移除条目
-        let pending_keys: Vec<_> = self.pending_messages.iter().map(|entry| *entry.key()).collect();
+        let pending_keys: Vec<_> = self
+            .pending_messages
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
         for device_id in pending_keys {
             if let Some((_, messages)) = self.pending_messages.remove(&device_id) {
                 removed_size += messages.len() as u64 * std::mem::size_of::<Message>() as u64;
@@ -144,13 +151,17 @@ impl Storage for MemoryStorage {
         }
 
         // 清理审计日志 - 完全移除条目
-        let audit_keys: Vec<_> = self.audit_logs.iter().map(|entry| entry.key().clone()).collect();
+        let audit_keys: Vec<_> = self
+            .audit_logs
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
         for key in audit_keys {
             if let Some((_, logs)) = self.audit_logs.remove(&key) {
                 removed_size += logs.len() as u64 * 100; // 估算每条日志100字节
             }
         }
-        
+
         Ok(removed_size)
     }
 
@@ -159,21 +170,27 @@ impl Storage for MemoryStorage {
     }
 
     fn clear_indexes(&self) {
-        // 清理所有内存存储中的数据，使用 entry removal 避免 DashMap 碎片化
-        let message_keys: Vec<_> = self.messages.iter().map(|entry| entry.key().clone()).collect();
+        let message_keys: Vec<_> = self.messages.iter().map(|entry| *entry.key()).collect();
         for key in message_keys {
             self.messages.remove(&key);
         }
 
-        let pending_keys: Vec<_> = self.pending_messages.iter().map(|entry| entry.key().clone()).collect();
+        let pending_keys: Vec<_> = self
+            .pending_messages
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
         for key in pending_keys {
             self.pending_messages.remove(&key);
         }
 
-        let audit_keys: Vec<_> = self.audit_logs.iter().map(|entry| entry.key().clone()).collect();
+        let audit_keys: Vec<_> = self
+            .audit_logs
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
         for key in audit_keys {
             self.audit_logs.remove(&key);
         }
     }
 }
-

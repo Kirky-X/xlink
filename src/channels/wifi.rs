@@ -2,10 +2,10 @@ use crate::core::error::{Result, XPushError};
 use crate::core::traits::Channel;
 use crate::core::types::{ChannelState, ChannelType, DeviceId, Message, NetworkType};
 use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// WiFi Direct 通道实现
 pub struct WiFiDirectChannel {
@@ -37,18 +37,25 @@ impl Channel for WiFiDirectChannel {
     async fn send(&self, message: Message) -> Result<()> {
         let peers = self.peers.lock().await;
         if let Some(addr) = peers.get(&message.recipient) {
-            log::info!("[WiFiDirect] Sending message {} to {} via P2P", message.id, addr);
+            log::info!(
+                "[WiFiDirect] Sending message {} to {} via P2P",
+                message.id,
+                addr
+            );
             // 此处应执行 TCP/UDP 传输
             return Ok(());
         }
-        
-        Err(XPushError::ChannelError(format!("Device {} not connected via WiFi Direct", message.recipient)))
+
+        Err(XPushError::ChannelError(format!(
+            "Device {} not connected via WiFi Direct",
+            message.recipient
+        )))
     }
 
     async fn check_state(&self, target: &DeviceId) -> Result<ChannelState> {
         let peers = self.peers.lock().await;
         let available = peers.contains_key(target);
-        
+
         Ok(ChannelState {
             available,
             rtt_ms: if available { 20 } else { 0 },
@@ -64,7 +71,10 @@ impl Channel for WiFiDirectChannel {
     }
 
     async fn start(&self) -> Result<()> {
-        log::info!("WiFi Direct channel started for device {}", self.local_device_id);
+        log::info!(
+            "WiFi Direct channel started for device {}",
+            self.local_device_id
+        );
         Ok(())
     }
 }

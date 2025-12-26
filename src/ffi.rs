@@ -1,12 +1,12 @@
+use crate::core::traits::MessageHandler;
+use crate::core::types::{ChannelType, DeviceCapabilities, DeviceId, DeviceType, MessagePayload};
 use crate::UnifiedPushSDK;
-use crate::core::types::{DeviceId, MessagePayload, DeviceCapabilities, DeviceType, ChannelType};
+use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
-use std::collections::HashSet;
-use crate::core::traits::MessageHandler;
 
 #[repr(C)]
 pub struct xpush_sdk {
@@ -17,7 +17,10 @@ pub struct xpush_sdk {
 struct NoopHandler;
 #[async_trait::async_trait]
 impl MessageHandler for NoopHandler {
-    async fn handle_message(&self, _message: crate::core::types::Message) -> crate::core::error::Result<()> {
+    async fn handle_message(
+        &self,
+        _message: crate::core::types::Message,
+    ) -> crate::core::error::Result<()> {
         Ok(())
     }
 }
@@ -49,7 +52,7 @@ pub extern "C" fn xpush_init() -> *mut xpush_sdk {
         let handler = Arc::new(NoopHandler);
         let memory_channel = Arc::new(crate::channels::memory::MemoryChannel::new(handler, 10));
         let channels: Vec<Arc<dyn crate::core::traits::Channel>> = vec![memory_channel];
-        
+
         UnifiedPushSDK::new(config, channels).await
     };
 
@@ -66,9 +69,9 @@ pub extern "C" fn xpush_init() -> *mut xpush_sdk {
 }
 
 /// 释放 SDK 实例
-/// 
+///
 /// # Safety
-/// 
+///
 /// 该函数必须由 C 调用，且 `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针。
 #[no_mangle]
 pub unsafe extern "C" fn xpush_free(sdk: *mut xpush_sdk) {
@@ -78,9 +81,9 @@ pub unsafe extern "C" fn xpush_free(sdk: *mut xpush_sdk) {
 }
 
 /// 发送文本消息
-/// 
+///
 /// # Safety
-/// 
+///
 /// 该函数必须由 C 调用，且参数必须有效：
 /// - `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针
 /// - `target_ptr` 必须指向有效的设备ID数据
@@ -117,9 +120,9 @@ pub unsafe extern "C" fn xpush_send_text(
 }
 
 /// 广播文本消息到群组
-/// 
+///
 /// # Safety
-/// 
+///
 /// - `sdk` 必须是有效的。
 /// - `group_id_ptr` 必须指向 16 字节的 UUID。
 /// - `text` 必须是有效的以 null 结尾的 C 字符串。
@@ -148,7 +151,10 @@ pub unsafe extern "C" fn xpush_broadcast_text(
     let group_id = crate::core::types::GroupId(group_uuid);
     let payload = MessagePayload::Text(text_str);
 
-    match sdk_ref.rt.block_on(sdk_ref.inner.send_to_group(group_id, payload)) {
+    match sdk_ref
+        .rt
+        .block_on(sdk_ref.inner.send_to_group(group_id, payload))
+    {
         Ok(_) => 0,
         Err(_) => -3,
     }

@@ -19,14 +19,11 @@ pub struct LanChannel {
 }
 
 impl LanChannel {
-    pub async fn new(
-        local_addr: SocketAddr,
-        handler: Arc<dyn MessageHandler>,
-    ) -> Result<Self> {
+    pub async fn new(local_addr: SocketAddr, handler: Arc<dyn MessageHandler>) -> Result<Self> {
         let socket = UdpSocket::bind(local_addr)
             .await
             .map_err(XPushError::IoError)?;
-        
+
         Ok(Self {
             local_addr,
             socket: Arc::new(socket),
@@ -55,13 +52,13 @@ impl Channel for LanChannel {
 
         match target_addr {
             Some(addr) => {
-                let data = serde_json::to_vec(&message)
-                    .map_err(XPushError::SerializationError)?;
-                
-                self.socket.send_to(&data, addr)
+                let data = serde_json::to_vec(&message).map_err(XPushError::SerializationError)?;
+
+                self.socket
+                    .send_to(&data, addr)
                     .await
                     .map_err(XPushError::IoError)?;
-                
+
                 log::info!("[LanChannel] Sent message {} to {}", message.id, addr);
                 Ok(())
             }
@@ -75,7 +72,7 @@ impl Channel for LanChannel {
     async fn check_state(&self, target: &DeviceId) -> Result<ChannelState> {
         let peers = self.peers.lock().await;
         let available = peers.contains_key(target);
-        
+
         Ok(ChannelState {
             available,
             rtt_ms: if available { 5 } else { 0 },
@@ -95,7 +92,10 @@ impl Channel for LanChannel {
         Ok(())
     }
 
-    async fn start_with_handler(&self, handler: Arc<dyn MessageHandler>) -> Result<Option<JoinHandle<()>>> {
+    async fn start_with_handler(
+        &self,
+        handler: Arc<dyn MessageHandler>,
+    ) -> Result<Option<JoinHandle<()>>> {
         {
             let mut h = self.handler.lock().await;
             *h = handler;

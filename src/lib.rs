@@ -5,11 +5,11 @@ pub mod crypto;
 pub mod router;
 pub mod storage;
 // 新增模块
+pub mod discovery;
+pub mod ffi;
 pub mod group;
 pub mod heartbeat;
-pub mod discovery;
 pub mod media;
-pub mod ffi;
 
 use crate::capability::manager::CapabilityManager;
 use crate::core::error::Result;
@@ -19,17 +19,17 @@ use crate::crypto::engine::CryptoEngine;
 use crate::router::selector::Router;
 
 // 引入新模块
-use crate::group::manager::GroupManager;
-use crate::heartbeat::manager::HeartbeatManager;
-use x25519_dalek::PublicKey;
 #[cfg(not(feature = "test_no_external_deps"))]
 use crate::discovery::manager::DiscoveryManager;
 #[cfg(feature = "test_no_external_deps")]
 use crate::discovery::manager_test::DiscoveryManager;
+use crate::group::manager::GroupManager;
+use crate::heartbeat::manager::HeartbeatManager;
 use crate::media::stream_manager::StreamManager;
+use x25519_dalek::PublicKey;
 
-use dashmap::DashMap;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -43,7 +43,7 @@ pub struct UnifiedPushSDK {
     cap_manager: Arc<CapabilityManager>,
     crypto: Arc<CryptoEngine>,
     storage: Arc<dyn Storage>,
-    
+
     // 新增 Manager
     group_manager: Arc<GroupManager>,
     heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
@@ -66,14 +66,22 @@ impl Drop for UnifiedPushSDK {
         log::info!("Dropping UnifiedPush SDK for device {}", self.device_id);
 
         // 由于 Drop 是同步的，我们只能同步地触发 abort - use proper entry removal
-        let receive_task_keys: Vec<_> = self.receive_tasks.iter().map(|entry| entry.key().clone()).collect();
+        let receive_task_keys: Vec<_> = self
+            .receive_tasks
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
         for channel_type in receive_task_keys {
             if let Some((_, task)) = self.receive_tasks.remove(&channel_type) {
                 task.abort();
             }
         }
 
-        let background_task_keys: Vec<_> = self.background_tasks.iter().map(|entry| entry.key().clone()).collect();
+        let background_task_keys: Vec<_> = self
+            .background_tasks
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
         for task_name in background_task_keys {
             if let Some((_, task)) = self.background_tasks.remove(&task_name) {
                 task.abort();
@@ -102,12 +110,17 @@ impl Drop for UnifiedPushSDK {
         self.metrics.clear();
 
         // 清理其他集合 - use proper entry removal to avoid DashMap fragmentation
-        let rate_limiter_keys: Vec<_> = self.rate_limiter.iter().map(|entry| entry.key().clone()).collect();
+        let rate_limiter_keys: Vec<_> =
+            self.rate_limiter.iter().map(|entry| *entry.key()).collect();
         for device_id in rate_limiter_keys {
             self.rate_limiter.remove(&device_id);
         }
 
-        let plugin_keys: Vec<_> = self.plugins.iter().map(|entry| entry.key().clone()).collect();
+        let plugin_keys: Vec<_> = self
+            .plugins
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
         for plugin_name in plugin_keys {
             self.plugins.remove(&plugin_name);
         }
@@ -143,16 +156,21 @@ impl MessageHandler for SdkMessageHandler {
             } else {
                 *count = count.saturating_add(1);
                 if *count > 100 {
-                    log::warn!("DoS Protection: Rate limit exceeded for device {}", message.sender);
-                    return Err(crate::core::error::XPushError::CryptoError("Rate limit exceeded".into()));
+                    log::warn!(
+                        "DoS Protection: Rate limit exceeded for device {}",
+                        message.sender
+                    );
+                    return Err(crate::core::error::XPushError::CryptoError(
+                        "Rate limit exceeded".into(),
+                    ));
                 }
             }
         } // 显式释放 DashMap 的 shard 锁，防止后续获取其他锁时产生死锁风险
 
         log::info!("SDK received message: {}", message.id);
-        
+
         self.metrics.record_receive(0); // 暂时记为0字节
-        
+
         // F6: 拦截心跳消息
         match message.payload {
             MessagePayload::Ping(_) | MessagePayload::Pong(_) => {
@@ -162,10 +180,19 @@ impl MessageHandler for SdkMessageHandler {
                 }
                 return Ok(()); // 心跳消息不透传给 App
             }
-            MessagePayload::StreamChunk { stream_id, total_chunks, chunk_index, data, .. } => {
+            MessagePayload::StreamChunk {
+                stream_id,
+                total_chunks,
+                chunk_index,
+                data,
+                ..
+            } => {
                 // F8: 拦截流分片
                 if let Some(sm) = self.stream_manager.upgrade() {
-                    match sm.handle_chunk(stream_id, total_chunks, chunk_index, data).await {
+                    match sm
+                        .handle_chunk(stream_id, total_chunks, chunk_index, data)
+                        .await
+                    {
                         Ok(Some(full_data)) => {
                             // 重组完成，替换 payload 传给 App
                             message.payload = MessagePayload::Binary(full_data);
@@ -198,16 +225,13 @@ impl MessageHandler for SdkMessageHandler {
         if let Err(e) = self.app_tx.send(message).await {
             log::error!("Failed to deliver message to app: {}", e);
         }
-        
+
         Ok(())
     }
 }
 
 impl UnifiedPushSDK {
-    pub async fn new(
-        config: DeviceCapabilities,
-        channels: Vec<Arc<dyn Channel>>,
-    ) -> Result<Self> {
+    pub async fn new(config: DeviceCapabilities, channels: Vec<Arc<dyn Channel>>) -> Result<Self> {
         Self::with_storage_path(config, channels, "storage".to_string()).await
     }
 
@@ -229,7 +253,7 @@ impl UnifiedPushSDK {
         let device_id = config.device_id;
         let cap_manager = Arc::new(CapabilityManager::new(config));
         let crypto = Arc::new(CryptoEngine::new());
-        
+
         let (app_tx, app_rx) = mpsc::channel(100);
 
         let mut channel_map = HashMap::new();
@@ -238,13 +262,19 @@ impl UnifiedPushSDK {
         }
 
         let router = Arc::new(Router::new(channel_map, cap_manager.clone()));
-        
+
         // 初始化新模块
         let group_manager = Arc::new(GroupManager::new(device_id, router.clone()));
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new(device_id, router.clone(), cap_manager.clone())));
+        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new(
+            device_id,
+            router.clone(),
+            cap_manager.clone(),
+        )));
         let discovery_manager = Arc::new(Mutex::new(DiscoveryManager::new(cap_manager.clone())));
         let stream_manager = Arc::new(StreamManager::new(device_id, router.clone()));
-        let cap_detector = Arc::new(Mutex::new(crate::capability::detector::LocalCapabilityDetector::new(cap_manager.clone())));
+        let cap_detector = Arc::new(Mutex::new(
+            crate::capability::detector::LocalCapabilityDetector::new(cap_manager.clone()),
+        ));
 
         let rate_limiter = Arc::new(DashMap::new());
         let metrics = Arc::new(crate::core::metrics::MetricsCollector::new());
@@ -316,14 +346,16 @@ impl UnifiedPushSDK {
         if let Some(task) = self.heartbeat_manager.lock().await.start() {
             self.background_tasks.insert("heartbeat".to_string(), task);
         }
-        let (mdns_task, ble_task) = self.discovery_manager.lock().await.start_discovery();
+        let (mdns_task, ble_task) = self.discovery_manager.lock().await.start_discovery().await;
         if let Some(task) = mdns_task {
-            self.background_tasks.insert("discovery_mdns".to_string(), task);
+            self.background_tasks
+                .insert("discovery_mdns".to_string(), task);
         }
         if let Some(task) = ble_task {
-            self.background_tasks.insert("discovery_ble".to_string(), task);
+            self.background_tasks
+                .insert("discovery_ble".to_string(), task);
         }
-        
+
         // F1: 启动后台能力检测任务
         let detector = self.cap_detector.clone();
         let detector_task = tokio::spawn(async move {
@@ -336,7 +368,8 @@ impl UnifiedPushSDK {
                 tokio::time::sleep(Duration::from_secs(30)).await;
             }
         });
-        self.background_tasks.insert("capability_detection".to_string(), detector_task);
+        self.background_tasks
+            .insert("capability_detection".to_string(), detector_task);
 
         // 启动数据保留清理任务
         let storage = self.storage.clone();
@@ -352,7 +385,8 @@ impl UnifiedPushSDK {
                 tokio::time::sleep(Duration::from_secs(24 * 3600)).await; // 每天清理一次
             }
         });
-        self.background_tasks.insert("data_cleanup".to_string(), cleanup_task);
+        self.background_tasks
+            .insert("data_cleanup".to_string(), cleanup_task);
 
         // 启动内存泄漏防护清理任务
         let group_manager = self.group_manager.clone();
@@ -362,14 +396,19 @@ impl UnifiedPushSDK {
                 group_manager.cleanup_expired_invites(24); // 清理24小时前的邀请记录
 
                 // 每12小时清理一次广播结果通道
-                if tokio::time::Instant::now().elapsed().as_secs() % (12 * 3600) == 0 {
+                if tokio::time::Instant::now()
+                    .elapsed()
+                    .as_secs()
+                    .is_multiple_of(12 * 3600)
+                {
                     group_manager.cleanup_expired_broadcast_results().await;
                 }
 
                 tokio::time::sleep(Duration::from_secs(6 * 3600)).await; // 每6小时检查一次
             }
         });
-        self.background_tasks.insert("memory_cleanup".to_string(), memory_cleanup_task);
+        self.background_tasks
+            .insert("memory_cleanup".to_string(), memory_cleanup_task);
 
         Ok(())
     }
@@ -377,16 +416,27 @@ impl UnifiedPushSDK {
     /// 导出 SDK 完整状态（用于设备迁移 UAT-F-024）
     pub fn export_sdk_state(&self) -> Result<Vec<u8>> {
         let crypto_state = self.crypto.export_state()?;
-        let serialized = serde_json::to_vec(&crypto_state)
-            .map_err(|e| crate::core::error::XPushError::CryptoError(format!("Failed to serialize SDK state: {}", e)))?;
+        let serialized = serde_json::to_vec(&crypto_state).map_err(|e| {
+            crate::core::error::XPushError::CryptoError(format!(
+                "Failed to serialize SDK state: {}",
+                e
+            ))
+        })?;
         Ok(serialized)
     }
 
     /// 导入 SDK 完整状态（用于设备迁移 UAT-F-024）
     pub fn import_sdk_state(&mut self, data: &[u8]) -> Result<()> {
         let crypto_state: crate::crypto::engine::CryptoState = serde_json::from_slice(data)
-            .map_err(|e| crate::core::error::XPushError::CryptoError(format!("Failed to deserialize SDK state: {}", e)))?;
-        self.crypto = Arc::new(crate::crypto::engine::CryptoEngine::import_state(crypto_state)?);
+            .map_err(|e| {
+                crate::core::error::XPushError::CryptoError(format!(
+                    "Failed to deserialize SDK state: {}",
+                    e
+                ))
+            })?;
+        self.crypto = Arc::new(crate::crypto::engine::CryptoEngine::import_state(
+            crypto_state,
+        )?);
         Ok(())
     }
 
@@ -395,7 +445,6 @@ impl UnifiedPushSDK {
         let discovery = self.discovery_manager.lock().await;
         discovery.simulate_background_discovery(device_id).await
     }
-
 
     pub async fn stop(&self) {
         log::info!("Stopping UnifiedPush SDK for device {}", self.device_id);
@@ -415,8 +464,8 @@ impl UnifiedPushSDK {
         // 停止后台服务
         self.heartbeat_manager.lock().await.stop();
         {
-            let mut dm = self.discovery_manager.lock().await;
-            dm.stop_discovery();
+            let dm = self.discovery_manager.lock().await;
+            dm.stop_discovery().await;
             dm.clear_cache().await;
         }
 
@@ -433,7 +482,11 @@ impl UnifiedPushSDK {
         self.stream_manager.clear_streams();
 
         // 清理存储索引，防止内存泄漏
-        if let Some(storage) = self.storage.as_any().downcast_ref::<crate::storage::file_store::FileStorage>() {
+        if let Some(storage) = self
+            .storage
+            .as_any()
+            .downcast_ref::<crate::storage::file_store::FileStorage>()
+        {
             storage.cleanup_indexes();
         }
 
@@ -451,7 +504,12 @@ impl UnifiedPushSDK {
     }
 
     pub async fn send(&self, recipient: DeviceId, payload: MessagePayload) -> Result<()> {
-        log::info!("Sending message from {} to {} with payload: {:?}", self.device_id, recipient, payload);
+        log::info!(
+            "Sending message from {} to {} with payload: {:?}",
+            self.device_id,
+            recipient,
+            payload
+        );
 
         // DoS 防护：限制发送速率，每秒最多 100 条消息
         {
@@ -466,8 +524,13 @@ impl UnifiedPushSDK {
             } else {
                 *count = count.saturating_add(1);
                 if *count > 100 {
-                    log::warn!("DoS Protection: Send rate limit exceeded for device {}", self.device_id);
-                    return Err(crate::core::error::XPushError::CryptoError("Rate limit exceeded".into()));
+                    log::warn!(
+                        "DoS Protection: Send rate limit exceeded for device {}",
+                        self.device_id
+                    );
+                    return Err(crate::core::error::XPushError::CryptoError(
+                        "Rate limit exceeded".into(),
+                    ));
                 }
             }
         } // 显式释放锁
@@ -477,9 +540,12 @@ impl UnifiedPushSDK {
 
         // 检查是否是流式传输
         if let MessagePayload::Binary(data) = &payload {
-            if data.len() > 1024 * 32 { // 如果大于 32KB，自动走流式传输
+            if data.len() > 1024 * 32 {
+                // 如果大于 32KB，自动走流式传输
                 log::info!("Using stream transmission for large message");
-                self.stream_manager.send_video_stream(recipient, data.clone(), None).await?;
+                self.stream_manager
+                    .send_video_stream(recipient, data.clone(), None)
+                    .await?;
                 return Ok(());
             }
         }
@@ -491,13 +557,16 @@ impl UnifiedPushSDK {
         // 这里暂时保持同步保存以确保可靠性，但在高负载下可能是瓶颈
         self.storage.save_message(&message).await?;
         log::info!("Message saved to storage");
-        
+
         let channel = match self.router.select_channel(&message).await {
             Ok(ch) => ch,
             Err(crate::core::error::XPushError::NoRouteFound) => {
                 // 如果没有找到路由，可能是因为还没有对方的 ChannelState 信息
                 // 在测试环境中，我们自动为目标设备添加默认的 ChannelState
-                log::warn!("No route found for {}, adding default test state", recipient);
+                log::warn!(
+                    "No route found for {}, adding default test state",
+                    recipient
+                );
                 for ctype in self.router.get_channels().keys() {
                     let state = crate::core::types::ChannelState {
                         available: true,
@@ -514,7 +583,8 @@ impl UnifiedPushSDK {
                             .as_secs(),
                         distance_meters: Some(10.0), // 默认近距离
                     };
-                    self.cap_manager.update_channel_state(recipient, *ctype, state);
+                    self.cap_manager
+                        .update_channel_state(recipient, *ctype, state);
                 }
                 // 再次尝试选择通道
                 self.router.select_channel(&message).await?
@@ -522,7 +592,7 @@ impl UnifiedPushSDK {
             Err(e) => return Err(e),
         };
         log::info!("Selected channel: {:?}", channel.channel_type());
-        
+
         match channel.send(message.clone()).await {
             Ok(_) => {
                 log::info!("Message sent successfully");
@@ -534,35 +604,40 @@ impl UnifiedPushSDK {
                 };
                 self.metrics.record_send(channel.channel_type(), bytes);
                 self.storage.remove_message(&message.id).await?;
-                
+
                 // 发送成功，也从待发送队列中移除（如果存在）
                 let _ = self.storage.remove_pending_message(&message.id).await;
                 Ok(())
             }
             Err(e) => {
                 log::error!("Failed to send message: {}", e);
-                
+
                 // 发送失败，保存到待发送队列用于崩溃恢复
                 if let Err(save_err) = self.storage.save_pending_message(&message).await {
                     log::error!("Failed to save pending message for recovery: {}", save_err);
                 } else {
                     log::info!("Saved message {} to pending queue for recovery", message.id);
                 }
-                
+
                 Err(e)
             }
         }
     }
-    
+
     // F4: 群组 API
-    pub async fn create_group(&self, name: String, members: Vec<DeviceId>) -> Result<crate::core::types::GroupId> {
+    pub async fn create_group(
+        &self,
+        name: String,
+        members: Vec<DeviceId>,
+    ) -> Result<crate::core::types::GroupId> {
         // 自动为所有成员（包括自己）注册随机公钥以满足 TreeKEM 要求
         // 在真实场景中，这些公钥应该通过密钥交换或预共享获取
         use rand::rngs::OsRng;
         use x25519_dalek::StaticSecret;
 
         // 注册自己的公钥
-        self.group_manager.register_device_key(self.device_id, self.crypto.public_key())?;
+        self.group_manager
+            .register_device_key(self.device_id, self.crypto.public_key())?;
 
         // 为其他成员注册随机公钥
         for member_id in &members {
@@ -576,22 +651,36 @@ impl UnifiedPushSDK {
         let group = self.group_manager.create_group(name, members).await?;
         Ok(group.id)
     }
-    
-    pub async fn send_to_group(&self, group_id: crate::core::types::GroupId, payload: MessagePayload) -> Result<()> {
+
+    pub async fn send_to_group(
+        &self,
+        group_id: crate::core::types::GroupId,
+        payload: MessagePayload,
+    ) -> Result<()> {
         self.group_manager.broadcast(group_id, payload).await?;
         Ok(())
     }
 
     pub fn register_device_key(&self, device_id: DeviceId, public_key: PublicKey) -> Result<()> {
-        self.group_manager.register_device_key(device_id, public_key)
+        self.group_manager
+            .register_device_key(device_id, public_key)
     }
 
-    pub fn encrypt_group_message(&self, group_id: crate::core::types::GroupId, payload: &MessagePayload) -> Result<MessagePayload> {
+    pub fn encrypt_group_message(
+        &self,
+        group_id: crate::core::types::GroupId,
+        payload: &MessagePayload,
+    ) -> Result<MessagePayload> {
         self.group_manager.encrypt_group_message(group_id, payload)
     }
 
-    pub fn decrypt_group_message(&self, group_id: crate::core::types::GroupId, encrypted_payload: &MessagePayload) -> Result<MessagePayload> {
-        self.group_manager.decrypt_group_message(group_id, encrypted_payload)
+    pub fn decrypt_group_message(
+        &self,
+        group_id: crate::core::types::GroupId,
+        encrypted_payload: &MessagePayload,
+    ) -> Result<MessagePayload> {
+        self.group_manager
+            .decrypt_group_message(group_id, encrypted_payload)
     }
 
     pub async fn rotate_group_key(&self, group_id: crate::core::types::GroupId) -> Result<()> {
@@ -622,7 +711,7 @@ impl UnifiedPushSDK {
             metrics: self.metrics.clone(),
         })
     }
-    
+
     pub fn capability_manager(&self) -> Arc<CapabilityManager> {
         self.cap_manager.clone()
     }
@@ -635,29 +724,28 @@ impl UnifiedPushSDK {
         self.metrics.get_report()
     }
 
-
     pub fn public_key(&self) -> PublicKey {
         self.crypto.public_key()
     }
 
     // --- 企业级管理 API ---
-    
+
     /// 获取当前合规性配置
     pub fn get_compliance_config(&self) -> crate::core::types::ComplianceConfig {
         self.compliance.as_ref().clone()
     }
-    
+
     /// 更新合规性配置 (需要管理员权限，此处简化)
     pub fn update_compliance_config(&mut self, config: crate::core::types::ComplianceConfig) {
         self.compliance = Arc::new(config);
         log::info!("Compliance config updated");
     }
-    
+
     /// 导出审计日志
     pub async fn export_audit_logs(&self) -> Result<Vec<String>> {
         self.storage.get_audit_logs(100).await
     }
-    
+
     /// 记录管理操作到审计日志
     #[allow(dead_code)]
     async fn log_audit(&self, action: &str) {
@@ -669,7 +757,7 @@ impl UnifiedPushSDK {
         );
         let _ = self.storage.save_audit_log(entry).await;
     }
-    
+
     /// 获取系统运行指标报告 (用于监控后台)
     pub fn get_system_metrics(&self) -> crate::core::metrics::MetricsReport {
         self.metrics.get_report()
@@ -694,66 +782,81 @@ impl UnifiedPushSDK {
         }
         Ok(())
     }
-    
+
     // --- 设备崩溃恢复和电量耗尽处理 ---
-    
+
     /// 保存待发送消息到持久化队列（用于设备崩溃恢复）
-    pub async fn save_pending_message(&self, recipient: DeviceId, payload: MessagePayload) -> Result<()> {
+    pub async fn save_pending_message(
+        &self,
+        recipient: DeviceId,
+        payload: MessagePayload,
+    ) -> Result<()> {
         let message = Message::new(self.device_id, recipient, payload);
         self.storage.save_pending_message(&message).await?;
         log::info!("Saved pending message {} for recovery", message.id);
         Ok(())
     }
-    
+
     /// 恢复设备崩溃后的待发送消息
     pub async fn recover_pending_messages(&self) -> Result<Vec<Message>> {
-        let messages = self.storage.get_pending_messages_for_recovery(&self.device_id).await?;
+        let messages = self
+            .storage
+            .get_pending_messages_for_recovery(&self.device_id)
+            .await?;
         log::info!("Recovered {} pending messages after crash", messages.len());
         Ok(messages)
     }
-    
+
     /// 获取存储使用情况（用于存储空间管理）
     pub async fn get_storage_usage(&self) -> Result<u64> {
         self.storage.get_storage_usage().await
     }
-    
+
     /// 清理存储空间到指定大小
     pub async fn cleanup_storage(&self, target_size_bytes: u64) -> Result<u64> {
         let removed = self.storage.cleanup_storage(target_size_bytes).await?;
         log::info!("Cleaned up {} bytes of storage", removed);
         Ok(removed)
     }
-    
+
     /// 处理电量耗尽场景：保存关键消息并优雅关闭
     pub async fn handle_low_battery_shutdown(&self) -> Result<()> {
         log::warn!("Low battery detected, performing graceful shutdown");
-        
+
         // 1. 保存所有待发送消息
         let pending_messages = self.recover_pending_messages().await?;
-        log::info!("Saved {} pending messages before shutdown", pending_messages.len());
-        
+        log::info!(
+            "Saved {} pending messages before shutdown",
+            pending_messages.len()
+        );
+
         // 2. 记录审计日志
-        self.storage.save_audit_log("Low battery shutdown initiated".to_string()).await?;
-        
+        self.storage
+            .save_audit_log("Low battery shutdown initiated".to_string())
+            .await?;
+
         // 3. 导出SDK状态用于恢复
         let state_data = self.export_sdk_state()?;
-        log::info!("Exported SDK state ({} bytes) for recovery", state_data.len());
-        
+        log::info!(
+            "Exported SDK state ({} bytes) for recovery",
+            state_data.len()
+        );
+
         // 4. 清理非关键数据以节省电量
         let _ = self.cleanup_storage(1024 * 1024).await; // 保留1MB
-        
+
         Ok(())
     }
-    
+
     /// 设备启动后恢复状态
     pub async fn recover_from_crash(&self) -> Result<()> {
         log::info!("Starting crash recovery process");
-        
+
         // 1. 恢复待发送消息
         let pending_messages = self.recover_pending_messages().await?;
         let total_messages = pending_messages.len();
         log::info!("Found {} messages to retry after crash", total_messages);
-        
+
         // 2. 尝试重新发送这些消息
         let mut failed_count = 0;
         for message in pending_messages {
@@ -769,13 +872,21 @@ impl UnifiedPushSDK {
                 }
             }
         }
-        
-        log::info!("Crash recovery completed: {} messages resent, {} failed", 
-                   total_messages - failed_count, failed_count);
-        
+
+        log::info!(
+            "Crash recovery completed: {} messages resent, {} failed",
+            total_messages - failed_count,
+            failed_count
+        );
+
         // 3. 记录恢复完成
-        self.storage.save_audit_log(format!("Crash recovery completed: {} messages processed", total_messages)).await?;
-        
+        self.storage
+            .save_audit_log(format!(
+                "Crash recovery completed: {} messages processed",
+                total_messages
+            ))
+            .await?;
+
         Ok(())
     }
 }

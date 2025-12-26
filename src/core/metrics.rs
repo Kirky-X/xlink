@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use dashmap::DashMap;
 use crate::core::types::{ChannelType, DeviceId};
+use dashmap::DashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 pub struct MetricsCollector {
@@ -8,13 +8,13 @@ pub struct MetricsCollector {
     messages_received: AtomicU64,
     bytes_sent: AtomicU64,
     bytes_received: AtomicU64,
-    
+
     // 按通道统计
     channel_usage: DashMap<ChannelType, AtomicU64>,
-    
+
     // 延迟统计 (ms)
     last_rtt: DashMap<DeviceId, u32>,
-    
+
     start_time: Instant,
 }
 
@@ -40,7 +40,7 @@ impl MetricsCollector {
     pub fn record_send(&self, channel: ChannelType, bytes: u64) {
         self.messages_sent.fetch_add(1, Ordering::Relaxed);
         self.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
-        
+
         self.channel_usage
             .entry(channel)
             .or_insert_with(|| AtomicU64::new(0))
@@ -92,15 +92,24 @@ impl MetricsCollector {
         let mut report = String::new();
         report.push_str("# HELP xpush_messages_sent_total Total number of messages sent\n");
         report.push_str("# TYPE xpush_messages_sent_total counter\n");
-        report.push_str(&format!("xpush_messages_sent_total {}\n", self.messages_sent.load(Ordering::Relaxed)));
+        report.push_str(&format!(
+            "xpush_messages_sent_total {}\n",
+            self.messages_sent.load(Ordering::Relaxed)
+        ));
 
         report.push_str("# HELP xpush_bytes_sent_total Total number of bytes sent\n");
         report.push_str("# TYPE xpush_bytes_sent_total counter\n");
-        report.push_str(&format!("xpush_bytes_sent_total {}\n", self.bytes_sent.load(Ordering::Relaxed)));
+        report.push_str(&format!(
+            "xpush_bytes_sent_total {}\n",
+            self.bytes_sent.load(Ordering::Relaxed)
+        ));
 
         for entry in self.channel_usage.iter() {
-            report.push_str(&format!("xpush_channel_usage_total{{channel=\"{:?}\"}} {}\n", 
-                entry.key(), entry.value().load(Ordering::Relaxed)));
+            report.push_str(&format!(
+                "xpush_channel_usage_total{{channel=\"{:?}\"}} {}\n",
+                entry.key(),
+                entry.value().load(Ordering::Relaxed)
+            ));
         }
         report
     }
@@ -114,13 +123,17 @@ impl MetricsCollector {
     /// 清理所有指标数据 - use proper entry removal to avoid DashMap fragmentation
     pub fn clear(&self) {
         // Remove channel_usage entries one by one to avoid fragmentation
-        let channel_keys: Vec<_> = self.channel_usage.iter().map(|entry| entry.key().clone()).collect();
+        let channel_keys: Vec<_> = self
+            .channel_usage
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
         for channel_type in channel_keys {
             self.channel_usage.remove(&channel_type);
         }
 
         // Remove last_rtt entries one by one to avoid fragmentation
-        let device_keys: Vec<_> = self.last_rtt.iter().map(|entry| entry.key().clone()).collect();
+        let device_keys: Vec<_> = self.last_rtt.iter().map(|entry| *entry.key()).collect();
         for device_id in device_keys {
             self.last_rtt.remove(&device_id);
         }

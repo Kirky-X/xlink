@@ -1,5 +1,5 @@
 use crate::core::types::{ChannelType, DeviceId};
-use chrono::{DateTime, Utc, Timelike};
+use chrono::{DateTime, Timelike, Utc};
 use dashmap::DashMap;
 
 /// 路由历史记录，用于趋势分析
@@ -29,7 +29,13 @@ impl RoutePredictor {
     }
 
     /// 记录一次路由尝试的结果
-    pub fn record_result(&self, device_id: DeviceId, channel: ChannelType, success: bool, latency_ms: Option<u32>) {
+    pub fn record_result(
+        &self,
+        device_id: DeviceId,
+        channel: ChannelType,
+        success: bool,
+        latency_ms: Option<u32>,
+    ) {
         let key = (device_id, channel);
         let mut entry = self.history.entry(key).or_insert(RouteHistory {
             success_count: 0,
@@ -62,7 +68,11 @@ impl RoutePredictor {
     }
 
     /// 预测给定设备在当前时刻的最优通道
-    pub fn predict_best_channel(&self, device_id: DeviceId, available_channels: &[ChannelType]) -> Option<ChannelType> {
+    pub fn predict_best_channel(
+        &self,
+        device_id: DeviceId,
+        available_channels: &[ChannelType],
+    ) -> Option<ChannelType> {
         if available_channels.is_empty() {
             return None;
         }

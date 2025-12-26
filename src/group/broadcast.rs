@@ -1,9 +1,9 @@
 use crate::core::types::{DeviceId, Group, Message, MessagePriority};
 use crate::router::selector::Router;
-use std::collections::HashSet;
-use std::sync::Arc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, info, warn};
+use std::collections::HashSet;
+use std::sync::Arc;
 
 /// 广播分发策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +97,10 @@ impl BroadcastExecutor {
     /// 扇出发送 (TODO: 识别超级节点并利用中继)
     async fn execute_fan_out(&self, group: &Group, message: Message) -> DispatchResult {
         // 简化实现：目前回退到直接发送
-        info!("Fan-out strategy requested for group {}, falling back to Direct", group.id);
+        info!(
+            "Fan-out strategy requested for group {}, falling back to Direct",
+            group.id
+        );
         self.execute_direct(group, message).await
     }
 

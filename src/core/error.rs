@@ -26,20 +26,20 @@ pub enum XPushError {
 
     #[error("Capability mismatch")]
     CapabilityMismatch,
-    
+
     // 新增错误类型
     #[error("Group not found: {0}")]
     GroupNotFound(String),
-    
+
     #[error("Not a member of group")]
     NotGroupMember,
-    
+
     #[error("Stream error: {0}")]
     StreamError(String),
-    
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
-    
+
     #[error("Group already exists: {0}")]
     GroupAlreadyExists(GroupId),
 }

@@ -81,8 +81,8 @@ pub enum ChannelType {
     BluetoothLE,
     BluetoothMesh,
     WiFiDirect,
-    Internet, 
-    Lan, 
+    Internet,
+    Lan,
 }
 
 impl ChannelType {
@@ -180,8 +180,8 @@ pub struct ChannelState {
     pub signal_strength: Option<i8>,
     pub distance_meters: Option<f32>, // F6: 估算距离
     pub network_type: NetworkType,
-    pub failure_count: u32,    // 连续失败次数
-    pub last_heartbeat: u64,   // 最后一次心跳时间戳
+    pub failure_count: u32,  // 连续失败次数
+    pub last_heartbeat: u64, // 最后一次心跳时间戳
 }
 
 impl Default for ChannelState {
@@ -206,7 +206,7 @@ pub struct GroupMember {
     pub device_id: DeviceId,
     pub role: MemberRole,
     pub joined_at: u64,
-    pub last_seen: u64, // 最后活跃时间
+    pub last_seen: u64,       // 最后活跃时间
     pub status: MemberStatus, // 成员状态
 }
 
@@ -243,19 +243,19 @@ pub enum MessagePayload {
     Text(String),
     Binary(Vec<u8>),
     // F4: 群组 ACK
-    GroupAck { 
-        original_msg_id: Uuid, 
-        responder: DeviceId 
+    GroupAck {
+        original_msg_id: Uuid,
+        responder: DeviceId,
     },
     Ack(Uuid),
-    
+
     // F6: 心跳包含发送时间戳用于计算 RTT
-    Ping(u64), 
+    Ping(u64),
     Pong(u64),
 
-    GroupInvite { 
-        group_id: GroupId, 
-        name: String 
+    GroupInvite {
+        group_id: GroupId,
+        name: String,
     },
 
     // F8: 增加时间戳用于流控
@@ -264,7 +264,7 @@ pub enum MessagePayload {
         total_chunks: u32,
         chunk_index: u32,
         data: Vec<u8>,
-        sent_at: u64, 
+        sent_at: u64,
     },
 
     // F8: 媒体帧定义，用于音视频帧重组
@@ -274,7 +274,7 @@ pub enum MessagePayload {
         data: Vec<u8>,
         timestamp: u64,
     },
-    
+
     // F8: 流控反馈
     StreamControl {
         stream_id: Uuid,
