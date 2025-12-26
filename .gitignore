@@ -41,3 +41,10 @@ docs/prd.md
 docs/tdd.md
 docs/test.md
 docs/uat.md
+
+# Rust-specific files
+**/*.rs.bk
+Cargo.lock
+
+# Local configuration
+.cargo/config.toml.local
