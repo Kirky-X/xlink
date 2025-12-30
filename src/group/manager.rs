@@ -71,7 +71,8 @@ impl GroupManager {
     /// 注册设备公钥到 TreeKEM 引擎
     pub fn register_device_key(&self, device_id: DeviceId, public_key: PublicKey) -> Result<()> {
         self.treekem_engine
-            .register_device_key(device_id, public_key)
+            .register_device_key(device_id, public_key);
+        Ok(())
     }
 
     /// 智能分类设备邻近性，用于混合拓扑广播
@@ -114,23 +115,21 @@ impl GroupManager {
             .as_secs();
 
         // 初始化 TreeKEM 群组密钥
-        let member_keys: Vec<_> = initial_members
+        let member_ids: Vec<_> = initial_members
             .iter()
-            .filter_map(
-                |&device_id| match self.treekem_engine.get_device_public_key(device_id) {
-                    Ok(key) => Some((device_id, key)),
-                    Err(_) => None,
-                },
-            )
+            .filter(|&&device_id| self.treekem_engine.get_device_public_key(device_id).is_ok())
+            .cloned()
             .collect();
 
-        if member_keys.is_empty() {
-            return Err(XPushError::CryptoError(
-                "No valid member keys found".to_string(),
+        if member_ids.is_empty() {
+            return Err(XPushError::invalid_input(
+                "member_keys",
+                "No valid member keys found for group creation",
+                file!(),
             ));
         }
 
-        self.treekem_engine.create_group(group_id, member_keys)?;
+        self.treekem_engine.create_group(group_id, member_ids)?;
 
         let mut members = HashMap::new();
         for device_id in initial_members {
@@ -179,7 +178,7 @@ impl GroupManager {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::GroupNotFound(group_id.to_string()))?;
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -187,18 +186,15 @@ impl GroupManager {
             .as_secs();
 
         // 注册新成员公钥到 TreeKEM (如果已有)
-        if let Ok(public_key) = self.treekem_engine.get_device_public_key(device_id) {
-            self.treekem_engine
-                .add_member(group_id, device_id, public_key)?;
+        if self.treekem_engine.get_device_public_key(device_id).is_ok() {
+            self.treekem_engine.add_member(group_id, device_id)?;
         } else {
-            // 如果没有公钥，在测试环境下生成一个
             use rand::rngs::OsRng;
             use x25519_dalek::StaticSecret;
             let secret = StaticSecret::random_from_rng(OsRng);
             let public = PublicKey::from(&secret);
-            self.treekem_engine.register_device_key(device_id, public)?;
-            self.treekem_engine
-                .add_member(group_id, device_id, public)?;
+            self.treekem_engine.register_device_key(device_id, public);
+            self.treekem_engine.add_member(group_id, device_id)?;
         }
 
         group.members.insert(
@@ -221,7 +217,7 @@ impl GroupManager {
 
         // 检查是否已存在
         if self.groups.contains_key(&group_id) {
-            return Err(XPushError::GroupAlreadyExists(group_id));
+            return Err(XPushError::group_already_exists(group_id.to_string(), file!()));
         }
 
         // 初始化 TreeKEM 群组成员密钥
@@ -237,15 +233,16 @@ impl GroupManager {
             .collect();
 
         if member_keys.is_empty() {
-            return Err(XPushError::CryptoError(
-                "No valid member keys found for joining group".to_string(),
+            return Err(XPushError::invalid_input(
+                "member_keys",
+                "No valid member keys found for joining group",
+                file!(),
             ));
         }
 
         // Add each member to the TreeKEM group
-        for (device_id, public_key) in member_keys {
-            self.treekem_engine
-                .add_member(group_id, device_id, public_key)?;
+        for (device_id, _public_key) in member_keys {
+            self.treekem_engine.add_member(group_id, device_id)?;
         }
 
         self.groups.insert(group_id, group.clone());
@@ -311,7 +308,7 @@ impl GroupManager {
         let group = self
             .groups
             .get(&group_id)
-            .ok_or_else(|| XPushError::GroupNotFound(group_id.to_string()))?;
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
         let message_id = Uuid::new_v4();
         let mut successful_devices = HashSet::new();
@@ -325,7 +322,7 @@ impl GroupManager {
             Ok(encrypted) => encrypted,
             Err(e) => {
                 log::error!("Failed to encrypt group message: {}", e);
-                return Err(XPushError::CryptoError(e.to_string()));
+                return Err(XPushError::encryption_failed("TreeKEM", &e.to_string(), file!()));
             }
         };
 
@@ -581,14 +578,16 @@ impl GroupManager {
                 );
 
                 // 广播密钥更新消息给所有群组成员
+                let update_path_bytes: Vec<u8> = update_path
+                    .path_public_keys
+                    .iter()
+                    .flat_map(|pk| pk.clone())
+                    .collect();
+
                 let update_payload = MessagePayload::GroupKeyUpdate {
                     group_id,
                     epoch: update_path.epoch,
-                    update_path: update_path
-                        .path_public_keys
-                        .iter()
-                        .flat_map(|pk| pk.as_bytes().to_vec())
-                        .collect(),
+                    update_path: update_path_bytes,
                 };
 
                 self.broadcast(group_id, update_payload).await?;
@@ -596,7 +595,7 @@ impl GroupManager {
             }
             Err(e) => {
                 log::error!("Failed to rotate group key for group {}: {}", group_id, e);
-                Err(XPushError::CryptoError(e.to_string()))
+                Err(XPushError::key_derivation_failed("TreeKEM key rotation", &e.to_string(), file!()))
             }
         }
     }
@@ -608,7 +607,7 @@ impl GroupManager {
     ) -> Result<MessagePayload> {
         self.treekem_engine
             .encrypt_group_message(group_id, payload)
-            .map_err(|e| XPushError::CryptoError(e.to_string()))
+            .map_err(|e| XPushError::encryption_failed("TreeKEM", &e.to_string(), file!()))
     }
 
     pub fn decrypt_group_message(
@@ -618,7 +617,7 @@ impl GroupManager {
     ) -> Result<MessagePayload> {
         self.treekem_engine
             .decrypt_group_message(group_id, encrypted_payload)
-            .map_err(|e| XPushError::CryptoError(e.to_string()))
+            .map_err(|e| XPushError::encryption_failed("TreeKEM", &e.to_string(), file!()))
     }
 
     /// 处理群组密钥更新
@@ -653,7 +652,7 @@ impl GroupManager {
                     group_id,
                     e
                 );
-                Err(XPushError::CryptoError(e.to_string()))
+                Err(XPushError::key_derivation_failed("TreeKEM key update", &e.to_string(), file!()))
             }
         }
     }
@@ -808,7 +807,7 @@ impl GroupManager {
         let group = self
             .groups
             .get(&group_id)
-            .ok_or_else(|| XPushError::GroupNotFound(group_id.to_string()))?;
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
         if group.members.len() <= MAX_SUBGROUP_SIZE {
             // 小群组直接广播
@@ -951,12 +950,13 @@ impl GroupManager {
                         self.groups.insert(group_id, group);
 
                         // 初始化 TreeKEM 群组密钥
-                        if let Ok(public_key) =
-                            self.treekem_engine.get_device_public_key(message.sender)
+                        if self
+                            .treekem_engine
+                            .get_device_public_key(message.sender)
+                            .is_ok()
                         {
-                            let member_keys = vec![(message.sender, public_key)];
-                            if let Err(e) = self.treekem_engine.create_group(group_id, member_keys)
-                            {
+                            let member_ids = vec![message.sender];
+                            if let Err(e) = self.treekem_engine.create_group(group_id, member_ids) {
                                 log::warn!(
                                     "Failed to initialize TreeKEM for invited group {}: {}",
                                     group_id,
