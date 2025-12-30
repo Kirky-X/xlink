@@ -9,7 +9,7 @@ use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 #[repr(C)]
-pub struct xpush_sdk {
+pub struct xlink_sdk {
     pub(crate) inner: Arc<UnifiedPushSDK>,
     pub(crate) rt: Runtime,
 }
@@ -26,7 +26,7 @@ impl MessageHandler for NoopHandler {
 }
 
 #[no_mangle]
-pub extern "C" fn xpush_init() -> *mut xpush_sdk {
+pub extern "C" fn xlink_init() -> *mut xlink_sdk {
     let rt = match Runtime::new() {
         Ok(rt) => rt,
         Err(_) => return std::ptr::null_mut(),
@@ -57,7 +57,7 @@ pub extern "C" fn xpush_init() -> *mut xpush_sdk {
 
     match rt.block_on(sdk_future) {
         Ok(sdk) => {
-            let boxed = Box::new(xpush_sdk {
+            let boxed = Box::new(xlink_sdk {
                 inner: Arc::new(sdk),
                 rt,
             });
@@ -71,10 +71,10 @@ pub extern "C" fn xpush_init() -> *mut xpush_sdk {
 ///
 /// # Safety
 ///
-/// - `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针
+/// - `sdk` 必须是一个有效的、由 `xlink_init` 返回的指针
 /// - 调用此函数后，`sdk` 指针将失效，不应再使用
 #[no_mangle]
-pub unsafe extern "C" fn xpush_shutdown(sdk: *mut xpush_sdk) -> i32 {
+pub unsafe extern "C" fn xlink_shutdown(sdk: *mut xlink_sdk) -> i32 {
     if sdk.is_null() {
         return -1;
     }
@@ -95,11 +95,11 @@ pub unsafe extern "C" fn xpush_shutdown(sdk: *mut xpush_sdk) -> i32 {
 ///
 /// # Safety
 ///
-/// - `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针
+/// - `sdk` 必须是一个有效的、由 `xlink_init` 返回的指针
 /// - 调用此函数后，`sdk` 指针将失效，不应再使用
 /// - 此函数会释放内存，因此不能对同一个指针调用两次
 #[no_mangle]
-pub unsafe extern "C" fn xpush_free(sdk: *mut xpush_sdk) {
+pub unsafe extern "C" fn xlink_free(sdk: *mut xlink_sdk) {
     if sdk.is_null() {
         return;
     }
@@ -119,12 +119,12 @@ pub unsafe extern "C" fn xpush_free(sdk: *mut xpush_sdk) {
 /// # Safety
 ///
 /// 该函数必须由 C 调用，且参数必须有效：
-/// - `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针
+/// - `sdk` 必须是一个有效的、由 `xlink_init` 返回的指针
 /// - `target_ptr` 必须指向有效的设备ID数据
 /// - `text` 必须指向有效的 UTF-8 字符串
 #[no_mangle]
-pub unsafe extern "C" fn xpush_send_text(
-    sdk: *mut xpush_sdk,
+pub unsafe extern "C" fn xlink_send_text(
+    sdk: *mut xlink_sdk,
     target_ptr: *const u8,
     text: *const c_char,
 ) -> i32 {
@@ -172,8 +172,8 @@ pub unsafe extern "C" fn xpush_send_text(
 /// - `group_id_ptr` 必须指向 16 字节的 UUID。
 /// - `text` 必须是有效的以 null 结尾的 C 字符串。
 #[no_mangle]
-pub unsafe extern "C" fn xpush_broadcast_text(
-    sdk: *mut xpush_sdk,
+pub unsafe extern "C" fn xlink_broadcast_text(
+    sdk: *mut xlink_sdk,
     group_id_ptr: *const u8,
     text: *const c_char,
 ) -> i32 {

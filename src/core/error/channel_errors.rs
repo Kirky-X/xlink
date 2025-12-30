@@ -15,7 +15,7 @@ impl XPushError {
     /// # Example
     ///
     /// ```
-    /// use xpush::core::error::XPushError;
+    /// use xlink::core::error::XPushError;
     ///
     /// let error = XPushError::channel_init_failed("Bluetooth not available", file!());
     /// ```

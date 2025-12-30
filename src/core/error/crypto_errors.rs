@@ -60,7 +60,7 @@ impl XPushError {
             ),
             location,
         )
-        .with_docs("https://docs.xpush.io/errors/0303")
+        .with_docs("https://docs.xlink.io/errors/0303")
     }
 
     /// 无效的密文 (0304)
@@ -76,7 +76,7 @@ impl XPushError {
             &format!("Invalid ciphertext: {}", reason_str),
             location,
         )
-        .with_docs("https://docs.xpush.io/errors/0304")
+        .with_docs("https://docs.xlink.io/errors/0304")
     }
 
     /// 签名验证失败 (0305)

@@ -117,16 +117,16 @@ pub async fn new(
 **Example:**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
+use xlink::UnifiedPushSDK;
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Phone".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -178,7 +178,7 @@ pub async fn start(&self) -> Result<(), Error>
 ```rust
 let capabilities = DeviceCapabilities {
     device_id,
-    device_type: xpush::core::types::DeviceType::Smartphone,
+    device_type: xlink::core::types::DeviceType::Smartphone,
     device_name: "My Phone".to_string(),
     supported_channels: HashSet::from([ChannelType::Lan]),
     battery_level: Some(80),
@@ -267,9 +267,9 @@ pub struct DeviceCapabilities {
 **Example:**
 
 ```rust
-use xpush::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceCapabilities;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 let capabilities = DeviceCapabilities {
     device_id: DeviceId::new(),
@@ -317,7 +317,7 @@ pub struct DeviceId(pub Uuid);
 **Example:**
 
 ```rust
-use xpush::core::types::DeviceId;
+use xlink::core::types::DeviceId;
 
 // Create new device ID
 let device_id = DeviceId::new();
@@ -394,7 +394,7 @@ pub fn new() -> Self
 **Example:**
 
 ```rust
-use xpush::crypto::engine::CryptoEngine;
+use xlink::crypto::engine::CryptoEngine;
 
 let crypto = CryptoEngine::new();
 let public_key = crypto.public_key();
@@ -494,7 +494,7 @@ pub fn encrypt_message(
 **Example:**
 
 ```rust
-use xpush::crypto::engine::CryptoEngine;
+use xlink::crypto::engine::CryptoEngine;
 
 let crypto = CryptoEngine::new();
 let recipient: DeviceId = "peer-device".to_string().try_into()?;
@@ -561,7 +561,7 @@ pub fn decrypt_message(
 **Example:**
 
 ```rust
-use xpush::crypto::engine::CryptoEngine;
+use xlink::crypto::engine::CryptoEngine;
 
 let crypto = CryptoEngine::new();
 let sender: DeviceId = "peer-device".to_string().try_into()?;
@@ -619,7 +619,7 @@ pub async fn establish_session(
 **Example:**
 
 ```rust
-use xpush::crypto::engine::CryptoEngine;
+use xlink::crypto::engine::CryptoEngine;
 
 let crypto = CryptoEngine::new();
 let peer_device_id: DeviceId = "peer-device".to_string().try_into()?;
@@ -681,8 +681,8 @@ XPush 的密钥管理集成在 `CryptoEngine` 中，自动处理密钥的生命�
 **Example: 完整的端到端加密流程**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::{DeviceCapabilities, DeviceId};
+use xlink::UnifiedPushSDK;
+use xlink::core::types::{DeviceCapabilities, DeviceId};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -827,7 +827,7 @@ XPush 使用现代密码学算法确保通信安全。
 XPush uses descriptive factory methods for error creation:
 
 ```rust
-use xpush::core::error::XPushError;
+use xlink::core::error::XPushError;
 
 // Factory methods for common errors:
 XPushError::channel_disconnected(channel_type, reason, location)
@@ -960,8 +960,8 @@ pub enum LogLevel {
 ### Example 1: Basic Usage
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::{DeviceCapabilities, DeviceId, MessagePayload, ChannelType};
+use xlink::UnifiedPushSDK;
+use xlink::core::types::{DeviceCapabilities, DeviceId, MessagePayload, ChannelType};
 use std::collections::HashSet;
 
 #[tokio::main]
@@ -969,7 +969,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -992,8 +992,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Example 2: Group Messaging
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::{DeviceCapabilities, DeviceId, MessagePayload, ChannelType};
+use xlink::UnifiedPushSDK;
+use xlink::core::types::{DeviceCapabilities, DeviceId, MessagePayload, ChannelType};
 use std::collections::HashSet;
 
 #[tokio::main]
@@ -1001,7 +1001,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -1031,8 +1031,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Example 3: E2E Encrypted Communication
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::{DeviceCapabilities, DeviceId, ChannelType};
+use xlink::UnifiedPushSDK;
+use xlink::core::types::{DeviceCapabilities, DeviceId, ChannelType};
 use std::collections::HashSet;
 
 #[tokio::main]
@@ -1040,7 +1040,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),

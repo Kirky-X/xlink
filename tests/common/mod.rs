@@ -9,19 +9,19 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-// use xpush::router::types::{RoutingStrategy, Target}; // These types don't exist in the codebase
+// use xlink::router::types::{RoutingStrategy, Target}; // These types don't exist in the codebase
 use std::collections::HashSet;
-use xpush::capability::manager::CapabilityManager;
-use xpush::core::error::Result;
-use xpush::core::traits::{Channel as ChannelTrait, MessageHandler};
-use xpush::core::types::{
+use xlink::capability::manager::CapabilityManager;
+use xlink::core::error::Result;
+use xlink::core::traits::{Channel as ChannelTrait, MessageHandler};
+use xlink::core::types::{
     ChannelType, DeviceCapabilities, DeviceId, DeviceType, Message, MessagePayload, NetworkType,
 };
-use xpush::UnifiedPushSDK;
+use xlink::UnifiedPushSDK;
 
 // We need these imports for the TestSdkBuilder
 
-use xpush::channels::memory::MemoryChannel;
+use xlink::channels::memory::MemoryChannel;
 
 // Define NoOpMessageHandler for testing
 pub struct NoOpMessageHandler;
@@ -170,7 +170,7 @@ impl TestSdkBuilder {
 
         // Add a default MemoryChannel if no channels are provided
         if channels.is_empty() {
-            let memory_channel = Arc::new(xpush::channels::memory::MemoryChannel::new(
+            let memory_channel = Arc::new(xlink::channels::memory::MemoryChannel::new(
                 Arc::new(NoOpMessageHandler),
                 10,
             ));
@@ -357,7 +357,7 @@ impl NetworkSimulator {
 
         // Simulate packet loss
         if rand::random::<f64>() < self.packet_loss_rate {
-            return Err(xpush::core::error::XPushError::channel_disconnected(
+            return Err(xlink::core::error::XPushError::channel_disconnected(
                 "Simulated packet loss".to_string(),
                 file!(),
             ));
@@ -379,7 +379,7 @@ impl NetworkSimulator {
         failure_rate: f64,
     ) -> Result<()> {
         if failure_rate > 0.0 && rand::random::<f64>() < failure_rate {
-            return Err(xpush::core::error::XPushError::channel_disconnected(
+            return Err(xlink::core::error::XPushError::channel_disconnected(
                 "Simulated network failure".to_string(),
                 file!(),
             ));
@@ -459,7 +459,7 @@ pub fn reset_test_state() {
 }
 
 /// Establish cryptographic sessions between devices for group communication
-pub async fn establish_device_sessions(devices: &[&xpush::UnifiedPushSDK]) -> Result<()> {
+pub async fn establish_device_sessions(devices: &[&xlink::UnifiedPushSDK]) -> Result<()> {
     // Register each device's public key with every other device's group manager
     for i in 0..devices.len() {
         for j in 0..devices.len() {
@@ -469,14 +469,14 @@ pub async fn establish_device_sessions(devices: &[&xpush::UnifiedPushSDK]) -> Re
                 devices[i].register_device_key(device_id, public_key)?;
 
                 // Also register channel state for LAN channel (which is the default in TestSdkBuilder)
-                let channel_state = xpush::core::types::ChannelState {
+                let channel_state = xlink::core::types::ChannelState {
                     available: true,
                     rtt_ms: 10,
                     jitter_ms: 0,
                     packet_loss_rate: 0.0,
                     bandwidth_bps: 1000000,
                     signal_strength: Some(100),
-                    network_type: xpush::core::types::NetworkType::Unknown,
+                    network_type: xlink::core::types::NetworkType::Unknown,
                     failure_count: 0,
                     last_heartbeat: 0,
                     distance_meters: Some(10.0),
@@ -485,12 +485,12 @@ pub async fn establish_device_sessions(devices: &[&xpush::UnifiedPushSDK]) -> Re
                 // Update channel state for both directions
                 devices[i].capability_manager().update_channel_state(
                     device_id,
-                    xpush::core::types::ChannelType::Lan,
+                    xlink::core::types::ChannelType::Lan,
                     channel_state.clone(),
                 );
                 devices[j].capability_manager().update_channel_state(
                     devices[i].device_id(),
-                    xpush::core::types::ChannelType::Lan,
+                    xlink::core::types::ChannelType::Lan,
                     channel_state,
                 );
             }

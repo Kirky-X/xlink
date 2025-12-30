@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use xpush::channels::memory::MemoryChannel;
-use xpush::core::types::{
+use xlink::channels::memory::MemoryChannel;
+use xlink::core::types::{
     ChannelState, ChannelType, DeviceCapabilities, DeviceId, DeviceType, MessagePayload,
 };
-use xpush::UnifiedPushSDK;
+use xlink::UnifiedPushSDK;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,11 +26,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     struct DemoHandler;
     #[async_trait::async_trait]
-    impl xpush::core::traits::MessageHandler for DemoHandler {
+    impl xlink::core::traits::MessageHandler for DemoHandler {
         async fn handle_message(
             &self,
-            _msg: xpush::core::types::Message,
-        ) -> xpush::core::error::Result<()> {
+            _msg: xlink::core::types::Message,
+        ) -> xlink::core::error::Result<()> {
             Ok(())
         }
     }

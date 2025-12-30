@@ -24,7 +24,7 @@ impl XPushError {
             ),
             location,
         )
-        .with_docs("https://docs.xpush.io/errors/0801")
+        .with_docs("https://docs.xlink.io/errors/0801")
     }
 
     /// 无效的协议消息 (0802)

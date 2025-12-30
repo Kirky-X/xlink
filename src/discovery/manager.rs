@@ -59,7 +59,7 @@ impl DiscoveryManager {
                     return;
                 }
             };
-            let service_type = "_xpush._tcp.local.";
+            let service_type = "_xlink._tcp.local.";
 
             let receiver = match mdns.browse(service_type) {
                 Ok(r) => r,
@@ -193,7 +193,7 @@ impl DiscoveryManager {
     }
 
     fn filter_service(info: &mdns_sd::ServiceInfo) -> bool {
-        info.get_fullname().contains("_xpush._tcp.local.")
+        info.get_fullname().contains("_xlink._tcp.local.")
     }
 
     fn estimate_distance_from_network(_info: &mdns_sd::ServiceInfo) -> f32 {

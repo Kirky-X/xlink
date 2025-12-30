@@ -144,8 +144,8 @@ graph LR
 Perfect for office, home, or industrial environments where devices communicate over local networks without internet dependency.
 
 ```rust
-use xpush::channels::lan::LanChannel;
-use xpush::UnifiedPushSDK;
+use xlink::channels::lan::LanChannel;
+use xlink::UnifiedPushSDK;
 
 let lan_channel = Arc::new(LanChannel::new());
 let sdk = UnifiedPushSDK::new(capabilities, vec![lan_channel]).await?;
@@ -162,7 +162,7 @@ sdk.start().await?;
 Ideal for ad-hoc networks, IoT deployments, and scenarios where devices form peer-to-peer mesh networks.
 
 ```rust
-use xpush::channels::mesh::MeshChannel;
+use xlink::channels::mesh::MeshChannel;
 
 let mesh_channel = Arc::new(MeshChannel::new());
 let sdk = UnifiedPushSDK::new(capabilities, vec![mesh_channel]).await?;
@@ -178,7 +178,7 @@ let sdk = UnifiedPushSDK::new(capabilities, vec![mesh_channel]).await?;
 Enterprise-grade encrypted group messaging with TreeKem forward secrecy and efficient broadcast.
 
 ```rust
-use xpush::core::types::{DeviceId, MessagePayload};
+use xlink::core::types::{DeviceId, MessagePayload};
 
 let group_manager = sdk.group_manager();
 group_manager.create_group(vec![alice_id, bob_id]).await?;
@@ -195,7 +195,7 @@ group_manager.broadcast_message(group_id, payload).await?;
 Automatic stream handling for large files and video streams with chunking and reassembly.
 
 ```rust
-use xpush::core::types::MessagePayload;
+use xlink::core::types::MessagePayload;
 
 let large_data = std::fs::read("large_file.mp4")?;
 sdk.send(recipient, MessagePayload::Binary(large_data)).await?;
@@ -218,7 +218,7 @@ sdk.send(recipient, MessagePayload::Binary(large_data)).await?;
 
 ```toml
 [dependencies]
-xpush = "0.1"
+xlink = "0.1"
 ```
 
 </td>
@@ -228,7 +228,7 @@ xpush = "0.1"
 
 ```toml
 [dependencies]
-xpush = { version = "0.1", features = ["full"] }
+xlink = { version = "0.1", features = ["full"] }
 ```
 
 </td>
@@ -250,7 +250,7 @@ xpush = { version = "0.1", features = ["full"] }
 **Step 1: Define Device Capabilities**
 
 ```rust
-use xpush::core::types::{
+use xlink::core::types::{
     ChannelType, DeviceCapabilities, DeviceId, DeviceType,
 };
 use std::collections::HashSet;
@@ -276,8 +276,8 @@ let capabilities = DeviceCapabilities {
 **Step 2: Create SDK Instance**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::channels::memory::MemoryChannel;
+use xlink::UnifiedPushSDK;
+use xlink::channels::memory::MemoryChannel;
 
 let channel = Arc::new(MemoryChannel::new(handler, 50));
 let sdk = UnifiedPushSDK::new(capabilities, vec![channel]).await?;
@@ -296,11 +296,11 @@ sdk.start().await?;
 ```rust
 use std::collections::HashSet;
 use std::sync::Arc;
-use xpush::channels::memory::MemoryChannel;
-use xpush::core::types::{
+use xlink::channels::memory::MemoryChannel;
+use xlink::core::types::{
     ChannelType, DeviceCapabilities, DeviceId, DeviceType, MessagePayload,
 };
-use xpush::UnifiedPushSDK;
+use xlink::UnifiedPushSDK;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -346,7 +346,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Complete usage guide
 </td>
 <td align="center" width="25%">
-<a href="https://docs.rs/xpush">
+<a href="https://docs.rs/xlink">
 <img src="https://img.icons8.com/fluency/96/000000/api.png" width="64" height="64"><br>
 <b>API Reference</b>
 </a><br>
@@ -399,9 +399,9 @@ Basic point-to-point messaging between two devices.
 **File**: [examples/simple_chat.rs](examples/simple_chat.rs)
 
 ```rust
-use xpush::channels::memory::MemoryChannel;
-use xpush::core::types::{ChannelType, DeviceCapabilities, MessagePayload};
-use xpush::UnifiedPushSDK;
+use xlink::channels::memory::MemoryChannel;
+use xlink::core::types::{ChannelType, DeviceCapabilities, MessagePayload};
+use xlink::UnifiedPushSDK;
 
 let sdk = UnifiedPushSDK::new(capabilities, vec![channel]).await?;
 sdk.start().await?;
@@ -418,7 +418,7 @@ Secure group messaging with multiple participants.
 **File**: [examples/group_chat.rs](examples/group_chat.rs)
 
 ```rust
-use xpush::group::manager::GroupManager;
+use xlink::group::manager::GroupManager;
 
 let group_manager = sdk.group_manager();
 let group_id = group_manager.create_group(members).await?;
@@ -440,8 +440,8 @@ Dynamic channel management and switching.
 **File**: [examples/channel_switching.rs](examples/channel_switching.rs)
 
 ```rust
-use xpush::channels::wifi::WifiChannel;
-use xpush::channels::bluetooth::BluetoothChannel;
+use xlink::channels::wifi::WifiChannel;
+use xlink::channels::bluetooth::BluetoothChannel;
 
 let wifi = Arc::new(WifiChannel::new());
 let bluetooth = Arc::new(BluetoothChannel::new());
@@ -599,7 +599,7 @@ graph TB
 ### Device Capabilities Configuration
 
 ```rust
-use xpush::core::types::{ChannelType, DeviceCapabilities, DeviceType};
+use xlink::core::types::{ChannelType, DeviceCapabilities, DeviceType};
 
 let capabilities = DeviceCapabilities {
     device_id: DeviceId::new(),
@@ -645,7 +645,7 @@ let capabilities = DeviceCapabilities {
 ### Compliance Configuration
 
 ```rust
-use xpush::core::types::ComplianceConfig;
+use xlink::core::types::ComplianceConfig;
 
 let compliance = ComplianceConfig {
     retention_days: 30,  // Keep data for 30 days
@@ -947,7 +947,7 @@ Want to contribute?<br>
 ### How to Contribute
 
 1. **Fork** the repository
-2. **Clone** your fork: `git clone https://github.com/yourusername/xpush.git`
+2. **Clone** your fork: `git clone https://github.com/yourusername/xlink.git`
 3. **Create** a branch: `git checkout -b feature/amazing-feature`
 4. **Make** your changes
 5. **Test** your changes: `cargo test --all-features`
@@ -1051,7 +1051,7 @@ Report bugs & issues
 Ask questions & share ideas
 </td>
 <td align="center" width="33%">
-<a href="https://github.com/xpush/xpush">
+<a href="https://github.com/xlink/xlink">
 <img src="https://img.icons8.com/fluency/96/000000/github.png" width="48" height="48"><br>
 <b>GitHub</b>
 </a><br>
@@ -1076,7 +1076,7 @@ If you find this project useful, please consider giving it a ⭐️!
 
 **Built with ❤️ by the SDK Team**
 
-[⬆ Back to Top](#-xpush)
+[⬆ Back to Top](#-xlink)
 
 ---
 

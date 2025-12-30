@@ -1,9 +1,9 @@
 mod common;
 
 use crate::common::test_device_id;
-use xpush::channels::bluetooth::BluetoothChannel;
-use xpush::core::traits::Channel;
-use xpush::core::types::{ChannelType, Message, MessagePayload, NetworkType};
+use xlink::channels::bluetooth::BluetoothChannel;
+use xlink::core::traits::Channel;
+use xlink::core::types::{ChannelType, Message, MessagePayload, NetworkType};
 
 #[tokio::test]
 async fn test_bluetooth_channel_creation() {

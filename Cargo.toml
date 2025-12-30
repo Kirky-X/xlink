@@ -1,9 +1,9 @@
 [package]
-name = "xpush"
+name = "xlink"
 version = "0.1.0"
 edition = "2021"
 authors = ["SDK Team"]
-description = "Unified Multi-Channel Push SDK"
+description = "Unified Multi-Channel Communication SDK"
 license = "MIT"
 
 [dependencies]

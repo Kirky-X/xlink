@@ -124,8 +124,8 @@ impl CapabilityManager {
     /// # 示例
     /// ```rust,no_run
     /// use std::sync::Arc;
-    /// use xpush::capability::manager::{CapabilityManager, CapabilityChange};
-    /// use xpush::core::types::{DeviceCapabilities, DeviceType, ChannelType, DeviceId};
+    /// use xlink::capability::manager::{CapabilityManager, CapabilityChange};
+    /// use xlink::core::types::{DeviceCapabilities, DeviceType, ChannelType, DeviceId};
     /// use std::collections::HashSet;
     ///
     /// # fn main() {

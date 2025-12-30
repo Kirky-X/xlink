@@ -19,7 +19,7 @@ use std::hash::Hash;
 ///
 /// ```ignore
 /// use dashmap::DashMap;
-/// use xpush::utils::clear_dashmap;
+/// use xlink::utils::clear_dashmap;
 ///
 /// let map: DashMap<u32, String> = DashMap::new();
 /// map.insert(1, "a".to_string());
@@ -51,7 +51,7 @@ where
 ///
 /// ```ignore
 /// use dashmap::DashMap;
-/// use xpush::utils::remove_keys;
+/// use xlink::utils::remove_keys;
 ///
 /// let map: DashMap<u32, String> = DashMap::new();
 /// map.insert(1, "a".to_string());
@@ -85,7 +85,7 @@ where
 ///
 /// ```ignore
 /// use dashmap::DashMap;
-/// use xpush::utils::get_all_keys;
+/// use xlink::utils::get_all_keys;
 ///
 /// let map: DashMap<u32, String> = DashMap::new();
 /// map.insert(1, "a".to_string());
@@ -115,7 +115,7 @@ where
 ///
 /// ```ignore
 /// use dashmap::DashMap;
-/// use xpush::utils::get_all_values;
+/// use xlink::utils::get_all_values;
 ///
 /// let map: DashMap<u32, String> = DashMap::new();
 /// map.insert(1, "a".to_string());

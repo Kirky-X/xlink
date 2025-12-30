@@ -24,7 +24,7 @@ impl XPushError {
             ),
             location,
         )
-        .with_docs("https://docs.xpush.io/errors/0601")
+        .with_docs("https://docs.xlink.io/errors/0601")
     }
 
     /// 流连接断开 (0602)
@@ -71,7 +71,7 @@ impl XPushError {
             ),
             location,
         )
-        .with_docs("https://docs.xpush.io/errors/0603")
+        .with_docs("https://docs.xlink.io/errors/0603")
     }
 
     /// 带宽不足 (0604)

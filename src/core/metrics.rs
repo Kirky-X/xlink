@@ -90,23 +90,23 @@ impl MetricsCollector {
     /// 导出为 Prometheus 格式
     pub fn export_prometheus(&self) -> String {
         let mut report = String::new();
-        report.push_str("# HELP xpush_messages_sent_total Total number of messages sent\n");
-        report.push_str("# TYPE xpush_messages_sent_total counter\n");
+        report.push_str("# HELP xlink_messages_sent_total Total number of messages sent\n");
+        report.push_str("# TYPE xlink_messages_sent_total counter\n");
         report.push_str(&format!(
-            "xpush_messages_sent_total {}\n",
+            "xlink_messages_sent_total {}\n",
             self.messages_sent.load(Ordering::Relaxed)
         ));
 
-        report.push_str("# HELP xpush_bytes_sent_total Total number of bytes sent\n");
-        report.push_str("# TYPE xpush_bytes_sent_total counter\n");
+        report.push_str("# HELP xlink_bytes_sent_total Total number of bytes sent\n");
+        report.push_str("# TYPE xlink_bytes_sent_total counter\n");
         report.push_str(&format!(
-            "xpush_bytes_sent_total {}\n",
+            "xlink_bytes_sent_total {}\n",
             self.bytes_sent.load(Ordering::Relaxed)
         ));
 
         for entry in self.channel_usage.iter() {
             report.push_str(&format!(
-                "xpush_channel_usage_total{{channel=\"{:?}\"}} {}\n",
+                "xlink_channel_usage_total{{channel=\"{:?}\"}} {}\n",
                 entry.key(),
                 entry.value().load(Ordering::Relaxed)
             ));

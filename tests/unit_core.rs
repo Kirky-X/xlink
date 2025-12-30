@@ -9,11 +9,11 @@ use crate::common::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use xpush::capability::manager::CapabilityManager;
-use xpush::core::types::{ChannelType, DeviceCapabilities, DeviceType, MessagePayload};
-use xpush::heartbeat::manager::HeartbeatManager;
-use xpush::router::scoring::Scorer;
-use xpush::router::selector::Router;
+use xlink::capability::manager::CapabilityManager;
+use xlink::core::types::{ChannelType, DeviceCapabilities, DeviceType, MessagePayload};
+use xlink::heartbeat::manager::HeartbeatManager;
+use xlink::router::scoring::Scorer;
+use xlink::router::selector::Router;
 
 // ==================== Router & Scoring Tests ====================
 
@@ -24,7 +24,7 @@ async fn test_router_scoring_logic() {
     let message = test_text_message("test");
 
     // Simulate channel state
-    let state = xpush::core::types::ChannelState {
+    let state = xlink::core::types::ChannelState {
         available: true,
         rtt_ms: 50,
         jitter_ms: 5,
@@ -32,7 +32,7 @@ async fn test_router_scoring_logic() {
         bandwidth_bps: 1000000,
         signal_strength: Some(-50),
         distance_meters: Some(5.0),
-        network_type: xpush::core::types::NetworkType::WiFi,
+        network_type: xlink::core::types::NetworkType::WiFi,
         failure_count: 0,
         last_heartbeat: 0,
     };
@@ -51,7 +51,7 @@ async fn test_router_cost_sensitive() {
 
     // Setup channel state for the target device
     let target_device = test_device_id();
-    let state = xpush::core::types::ChannelState {
+    let state = xlink::core::types::ChannelState {
         available: true,
         rtt_ms: 50,
         jitter_ms: 5,
@@ -59,16 +59,16 @@ async fn test_router_cost_sensitive() {
         bandwidth_bps: 1000000,
         signal_strength: Some(-50),
         distance_meters: Some(5.0),
-        network_type: xpush::core::types::NetworkType::WiFi,
+        network_type: xlink::core::types::NetworkType::WiFi,
         failure_count: 0,
         last_heartbeat: 0,
     };
     cap_manager.update_channel_state(target_device, ChannelType::BluetoothLE, state);
 
-    let mut channels: HashMap<ChannelType, Arc<dyn xpush::core::traits::Channel>> = HashMap::new();
+    let mut channels: HashMap<ChannelType, Arc<dyn xlink::core::traits::Channel>> = HashMap::new();
 
     let ble_channel = Arc::new(
-        xpush::channels::memory::MemoryChannel::new(Arc::new(NoOpMessageHandler), 10)
+        xlink::channels::memory::MemoryChannel::new(Arc::new(NoOpMessageHandler), 10)
             .with_type(ChannelType::BluetoothLE),
     );
     channels.insert(ChannelType::BluetoothLE, ble_channel.clone());
@@ -117,14 +117,14 @@ async fn test_heartbeat_ping_pong() {
     let router = Arc::new(Router::new(HashMap::new(), cap_manager.clone()));
     let heartbeat_manager = HeartbeatManager::new(d1, router, cap_manager);
 
-    let ping = xpush::core::types::Message {
+    let ping = xlink::core::types::Message {
         id: uuid::Uuid::new_v4(),
         sender: d2,
         recipient: d1,
         group_id: None,
         payload: MessagePayload::Ping(12345),
         timestamp: 12345,
-        priority: xpush::core::types::MessagePriority::Normal,
+        priority: xlink::core::types::MessagePriority::Normal,
         require_ack: false,
     };
 
@@ -137,7 +137,7 @@ async fn test_heartbeat_ping_pong() {
 #[test]
 fn test_error_code_parsing() {
     // 测试错误码解析
-    use xpush::core::error::ErrorCode;
+    use xlink::core::error::ErrorCode;
 
     let code: Result<ErrorCode, _> = "101".parse();
     assert_eq!(code, Ok(ErrorCode(101)));
@@ -153,7 +153,7 @@ fn test_error_code_parsing() {
 #[test]
 fn test_error_code_module_and_sequence() {
     // 测试错误码的模块和序号提取
-    use xpush::core::error::ErrorCode;
+    use xlink::core::error::ErrorCode;
 
     let code = ErrorCode(101);
     assert_eq!(code.module(), 1);
@@ -167,7 +167,7 @@ fn test_error_code_module_and_sequence() {
 #[test]
 fn test_error_category_code_range() {
     // 测试错误分类的代码范围
-    use xpush::core::error::ErrorCategory;
+    use xlink::core::error::ErrorCategory;
 
     let (start, end) = ErrorCategory::System.code_range();
     assert_eq!(start, 100);
@@ -181,7 +181,7 @@ fn test_error_category_code_range() {
 #[test]
 fn test_error_creation() {
     // 测试错误创建
-    use xpush::core::error::XPushError;
+    use xlink::core::error::XPushError;
 
     let error = XPushError::device_not_found("test-device", "test.rs");
     assert_eq!(error.code().0, 501);
@@ -192,7 +192,7 @@ fn test_error_creation() {
 #[test]
 fn test_error_with_context() {
     // 测试错误上下文
-    use xpush::core::error::XPushError;
+    use xlink::core::error::XPushError;
 
     let error =
         XPushError::channel_disconnected("Connection lost", "test.rs").with_device_id("device-123");
@@ -204,7 +204,7 @@ fn test_error_with_context() {
 #[test]
 fn test_error_chain() {
     // 测试错误链
-    use xpush::core::error::XPushError;
+    use xlink::core::error::XPushError;
 
     let inner = XPushError::invalid_input("test", "Invalid value", "inner.rs");
     let outer = XPushError::storage_write_failed("key", "Failed", "outer.rs").with_source(inner);
@@ -218,7 +218,7 @@ fn test_error_chain() {
 #[test]
 fn test_crypto_engine_creation() {
     // 测试加密引擎创建
-    use xpush::crypto::engine::CryptoEngine;
+    use xlink::crypto::engine::CryptoEngine;
 
     let engine = CryptoEngine::new();
     let public_key = engine.public_key();
@@ -230,7 +230,7 @@ fn test_crypto_engine_creation() {
 #[test]
 fn test_crypto_sign_and_verify() {
     // 测试签名和验证
-    use xpush::crypto::engine::CryptoEngine;
+    use xlink::crypto::engine::CryptoEngine;
 
     let engine = CryptoEngine::new();
     let data = b"test data";
@@ -243,8 +243,8 @@ fn test_crypto_sign_and_verify() {
 fn test_session_creation() {
     // 测试会话创建
     use x25519_dalek::PublicKey;
-    use xpush::core::types::DeviceId;
-    use xpush::crypto::engine::CryptoEngine;
+    use xlink::core::types::DeviceId;
+    use xlink::crypto::engine::CryptoEngine;
 
     let engine = CryptoEngine::new();
     let peer_id = DeviceId::new();
@@ -259,8 +259,8 @@ fn test_session_creation() {
 fn test_session_expiration() {
     // 测试会话过期
     use x25519_dalek::PublicKey;
-    use xpush::core::types::DeviceId;
-    use xpush::crypto::engine::CryptoEngine;
+    use xlink::core::types::DeviceId;
+    use xlink::crypto::engine::CryptoEngine;
 
     let engine = CryptoEngine::new();
     let peer_id = DeviceId::new();
@@ -281,10 +281,10 @@ fn test_path_validation() {
     use std::path::Path;
 
     // 正常路径应该通过验证
-    let valid_path = Path::new("/tmp/xpush");
+    let valid_path = Path::new("/tmp/xlink");
     assert!(!valid_path.to_string_lossy().contains(".."));
 
     // 路径遍历攻击应该被检测
-    let traversal_path = Path::new("/tmp/xpush/../../../etc");
+    let traversal_path = Path::new("/tmp/xlink/../../../etc");
     assert!(traversal_path.to_string_lossy().contains(".."));
 }

@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-use xpush::core::types::{DeviceId, MessagePayload};
-use xpush::UnifiedPushSDK;
+use xlink::core::types::{DeviceId, MessagePayload};
+use xlink::UnifiedPushSDK;
 
 use crate::common::{test_device_id, NetworkSimulator, TestSdkBuilder};
 

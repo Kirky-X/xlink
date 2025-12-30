@@ -3,9 +3,9 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::sync::Arc;
     use uuid::Uuid;
-    use xpush::core::traits::Storage;
-    use xpush::core::types::{DeviceId, Message, MessagePayload, MessagePriority};
-    use xpush::storage::memory_store::MemoryStorage;
+    use xlink::core::traits::Storage;
+    use xlink::core::types::{DeviceId, Message, MessagePayload, MessagePriority};
+    use xlink::storage::memory_store::MemoryStorage;
 
     async fn get_memory_usage() -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let output = Command::new("ps")

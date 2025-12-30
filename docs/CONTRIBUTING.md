@@ -155,8 +155,8 @@ Click the "Fork" button on GitHub
 **2. Clone Your Fork**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/xpush
-cd xpush
+git clone https://github.com/YOUR_USERNAME/xlink
+cd xlink
 ```
 
 </td>
@@ -168,7 +168,7 @@ cd xpush
 
 ```bash
 git remote add upstream \
-  https://github.com/xpush/xpush
+  https://github.com/xlink/xlink
 ```
 
 </td>
@@ -465,7 +465,7 @@ src/
 /// # Examples
 ///
 /// ```
-/// use xpush::{encrypt, Key};
+/// use xlink::{encrypt, Key};
 ///
 /// let key = Key::generate()?;
 /// let ciphertext = encrypt(b"secret", &key)?;
@@ -567,18 +567,18 @@ mod tests {
 
 ```rust
 // tests/integration_test.rs
-use xpush::{UnifiedPushSDK, Error};
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
+use xlink::{UnifiedPushSDK, Error};
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 #[tokio::test]
 async fn test_full_workflow() -> Result<(), Error> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "Test Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -590,7 +590,7 @@ async fn test_full_workflow() -> Result<(), Error> {
     sdk.start().await?;
 
     // Test basic operations
-    let payload = xpush::core::types::MessagePayload::Text("Integration test".to_string());
+    let payload = xlink::core::types::MessagePayload::Text("Integration test".to_string());
 
     sdk.send(recipient_id, payload).await?;
     sdk.stop().await;
@@ -803,14 +803,14 @@ git push origin feature/your-feature
 Q&A and ideas
 </td>
 <td width="33%" align="center">
-<a href="https://github.com/xpush/xpush/issues">
+<a href="https://github.com/xlink/xlink/issues">
 <img src="https://img.icons8.com/fluency/96/000000/bug.png" width="64"><br>
 <b>Issues</b>
 </a><br>
 Report bugs
 </td>
 <td width="33%" align="center">
-<a href="https://github.com/xpush/xpush">
+<a href="https://github.com/xlink/xlink">
 <img src="https://img.icons8.com/fluency/96/000000/github.png" width="64"><br>
 <b>GitHub</b>
 </a><br>
@@ -839,7 +839,7 @@ Your contributions make this project better for everyone.
 
 ---
 
-**[🏠 Home](README.md)** • **[📖 Docs](docs/USER_GUIDE.md)** • **[💬 GitHub](https://github.com/xpush/xpush)**
+**[🏠 Home](README.md)** • **[📖 Docs](docs/USER_GUIDE.md)** • **[💬 GitHub](https://github.com/xlink/xlink)**
 
 Made with ❤️ by our amazing community
 

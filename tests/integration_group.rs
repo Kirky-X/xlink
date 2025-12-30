@@ -9,10 +9,10 @@ use crate::common::{test_device_capabilities, test_device_id, NetworkSimulator, 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use xpush::capability::manager::CapabilityManager;
-use xpush::core::types::MessagePayload;
-use xpush::group::manager::GroupManager;
-use xpush::router::selector::Router;
+use xlink::capability::manager::CapabilityManager;
+use xlink::core::types::MessagePayload;
+use xlink::group::manager::GroupManager;
+use xlink::router::selector::Router;
 
 // ==================== Group Management (Unit-like Integration) ====================
 

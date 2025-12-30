@@ -16,7 +16,7 @@
 //! # 示例
 //!
 //! ```rust
-//! use xpush::core::error::{XPushError, Result};
+//! use xlink::core::error::{XPushError, Result};
 //!
 //! fn example() -> Result<()> {
 //!     Err(XPushError::device_not_found("device-001", file!()))
@@ -46,7 +46,7 @@ use thiserror::Error;
 ///
 /// # Example
 /// ```
-/// use xpush::core::error::ErrorCode;
+/// use xlink::core::error::ErrorCode;
 ///
 /// let code = ErrorCode(203);
 /// assert_eq!(format!("{}", code), "XP-0203");
@@ -61,7 +61,7 @@ impl ErrorCode {
     ///
     /// # Example
     /// ```
-    /// use xpush::core::error::ErrorCode;
+    /// use xlink::core::error::ErrorCode;
     ///
     /// let code = ErrorCode(203);
     /// assert_eq!(code.module(), 02);
@@ -76,7 +76,7 @@ impl ErrorCode {
     ///
     /// # Example
     /// ```
-    /// use xpush::core::error::ErrorCode;
+    /// use xlink::core::error::ErrorCode;
     ///
     /// let code = ErrorCode(203);
     /// assert_eq!(code.sequence(), 3);
@@ -463,7 +463,7 @@ impl fmt::Display for DetailedError {
 /// # 使用示例
 ///
 /// ```
-/// use xpush::core::error::{XPushError, Result};
+/// use xlink::core::error::{XPushError, Result};
 ///
 /// fn example() -> Result<()> {
 ///     Err(XPushError::device_not_found("device-001", file!()))
@@ -638,8 +638,8 @@ impl XPushError {
         let technical_details = self.context.original_message.to_string();
         let context = *self.context;
         let source = self.source.map(|s| {
-            let xpush_error = *s;
-            Box::new(xpush_error.to_detailed())
+            let xlink_error = *s;
+            Box::new(xlink_error.to_detailed())
         });
 
         DetailedError {
@@ -875,14 +875,14 @@ pub fn to_user_message(error: &XPushError) -> String {
 /// # 使用示例
 ///
 /// ```ignore
-/// use xpush::{xpush_error, core::error::XPushError};
+/// use xlink::{xlink_error, core::error::XPushError};
 ///
 /// fn example() -> Result<(), XPushError> {
-///     Err(xpush_error!(0201, Channel, "通道初始化失败", "Bluetooth not available"))
+///     Err(xlink_error!(0201, Channel, "通道初始化失败", "Bluetooth not available"))
 /// }
 /// ```
 #[macro_export]
-macro_rules! xpush_error {
+macro_rules! xlink_error {
     ($code:expr, $category:ident, $message:expr, $details:expr) => {
         XPushError::new_internal(
             ErrorCode($code),
@@ -914,7 +914,7 @@ macro_rules! xpush_error {
 /// # 使用示例
 ///
 /// ```ignore
-/// use xpush::{with_context, core::error::XPushError};
+/// use xlink::{with_context, core::error::XPushError};
 ///
 /// fn example() -> Result<(), XPushError> {
 ///     let result = std::fs::read_to_string("config.json")

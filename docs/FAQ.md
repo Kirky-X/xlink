@@ -249,7 +249,7 @@ Community request
 </table>
 
 **Documentation:**
-- [Rust API](https://docs.rs/xpush)
+- [Rust API](https://docs.rs/xlink)
 - [User Guide](USER_GUIDE.md)
 
 </details>
@@ -273,38 +273,38 @@ Community request
 
 ```toml
 [dependencies]
-xpush = "0.1"
+xlink = "0.1"
 ```
 
 Or using cargo:
 
 ```bash
-cargo add xpush
+cargo add xlink
 ```
 
 **From Source:**
 
 ```bash
-git clone https://github.com/xpush/xpush
-cd xpush
+git clone https://github.com/xlink/xlink
+cd xlink
 cargo build --release
 ```
 
 **Verification:**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
+use xlink::UnifiedPushSDK;
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "Test Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -434,7 +434,7 @@ services:
 
 **Pre-built Images:**
 ```bash
-docker pull ghcr.io/xpush/xpush:latest
+docker pull ghcr.io/xlink/xlink:latest
 ```
 
 </details>
@@ -457,11 +457,11 @@ docker pull ghcr.io/xpush/xpush:latest
 **5-Minute Quick Start:**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
+use xlink::UnifiedPushSDK;
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -469,7 +469,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -484,7 +484,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sdk.start().await?;
 
     // 4. Send a message
-    let payload = xpush::core::types::MessagePayload::Text("Hello, XPush!".to_string());
+    let payload = xlink::core::types::MessagePayload::Text("Hello, XPush!".to_string());
 
     // 5. Send to recipient (DeviceId)
     sdk.send(recipient_id, payload).await?;
@@ -543,11 +543,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 **Yes!** XPush supports multiple device connections through the channel system:
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
+use xlink::UnifiedPushSDK;
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -555,7 +555,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -567,7 +567,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sdk.start().await?;
 
     // Send messages to multiple recipients
-    let payload = xpush::core::types::MessagePayload::Text("Hello all devices!".to_string());
+    let payload = xlink::core::types::MessagePayload::Text("Hello all devices!".to_string());
 
     // Send to specific devices
     sdk.send(device_002_id, payload.clone()).await?;
@@ -601,19 +601,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 **Recommended Pattern:**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
-use xpush::core::error::Result;
+use xlink::UnifiedPushSDK;
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
+use xlink::core::error::Result;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -634,7 +634,7 @@ async fn main() -> Result<()> {
     }
 
     // Use ? operator for clean error handling
-    let payload = xpush::core::types::MessagePayload::Text("Hello!".to_string());
+    let payload = xlink::core::types::MessagePayload::Text("Hello!".to_string());
 
     sdk.send(recipient_id, payload).await?;
 
@@ -664,18 +664,18 @@ async fn main() -> Result<()> {
 **All async operations:**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
+use xlink::UnifiedPushSDK;
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -690,7 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sdk.start().await?;
 
     // Async send
-    let payload = xpush::core::types::MessagePayload::Text("Hello!".to_string());
+    let payload = xlink::core::types::MessagePayload::Text("Hello!".to_string());
     sdk.send(recipient_id, payload).await?;
 
     // Async stop
@@ -1052,18 +1052,18 @@ Error: SDK already initialized or in invalid state
 **Solution:**
 
 ```rust
-use xpush::UnifiedPushSDK;
-use xpush::core::types::DeviceCapabilities;
-use xpush::core::types::DeviceId;
+use xlink::UnifiedPushSDK;
+use xlink::core::types::DeviceCapabilities;
+use xlink::core::types::DeviceId;
 use std::collections::HashSet;
-use xpush::core::types::ChannelType;
+use xlink::core::types::ChannelType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_id = DeviceId::new();
     let capabilities = DeviceCapabilities {
         device_id,
-        device_type: xpush::core::types::DeviceType::Smartphone,
+        device_type: xlink::core::types::DeviceType::Smartphone,
         device_name: "My Device".to_string(),
         supported_channels: HashSet::from([ChannelType::Lan]),
         battery_level: Some(80),
@@ -1416,7 +1416,7 @@ Live chat
 
 ---
 
-**[📖 User Guide](USER_GUIDE.md)** • **[🔧 API Docs](https://docs.rs/xpush)** • **[🏠 Home](../README.md)**
+**[📖 User Guide](USER_GUIDE.md)** • **[🔧 API Docs](https://docs.rs/xlink)** • **[🏠 Home](../README.md)**
 
 Made with ❤️ by the Documentation Team
 

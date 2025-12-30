@@ -3,10 +3,10 @@ mod common;
 use crate::common::{test_device_id, NoOpMessageHandler};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use xpush::channels::lan::LanChannel;
-use xpush::core::error::Result;
-use xpush::core::traits::Channel;
-use xpush::core::types::ChannelType;
+use xlink::channels::lan::LanChannel;
+use xlink::core::error::Result;
+use xlink::core::traits::Channel;
+use xlink::core::types::ChannelType;
 
 #[tokio::test]
 async fn test_lan_channel_creation() -> Result<()> {

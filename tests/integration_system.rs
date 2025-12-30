@@ -9,9 +9,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::common::{establish_device_sessions, test_device_id, NetworkSimulator, TestSdkBuilder};
-use xpush::core::traits::Storage;
-use xpush::core::types::{ChannelType, DeviceCapabilities, DeviceType, MessagePayload};
-use xpush::storage::file_store::FileStorage;
+use xlink::core::traits::Storage;
+use xlink::core::types::{ChannelType, DeviceCapabilities, DeviceType, MessagePayload};
+use xlink::storage::file_store::FileStorage;
 
 // ==================== End-to-End User Scenarios ====================
 
@@ -94,7 +94,7 @@ async fn test_storage_cleanup() {
 
     // Save some messages
     for i in 0..20 {
-        let msg = xpush::core::types::Message::new(
+        let msg = xlink::core::types::Message::new(
             sender,
             recipient,
             MessagePayload::Text(format!("Msg {}", i)),

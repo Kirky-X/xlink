@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
-use xpush::channels::memory::MemoryChannel;
-use xpush::core::types::{DeviceId, MessagePayload};
-use xpush::storage::memory_store::MemoryStorage;
-use xpush::UnifiedPushSDK;
+use xlink::channels::memory::MemoryChannel;
+use xlink::core::types::{DeviceId, MessagePayload};
+use xlink::storage::memory_store::MemoryStorage;
+use xlink::UnifiedPushSDK;
 
 use crate::common::{test_device_id, NetworkSimulator, TestSdkBuilder};
 
@@ -24,8 +24,8 @@ async fn create_memory_sdk(
     device_id: DeviceId,
 ) -> Result<UnifiedPushSDK, Box<dyn std::error::Error>> {
     use std::collections::HashSet;
-    use xpush::core::traits::MessageHandler;
-    use xpush::core::types::{DeviceCapabilities, DeviceType};
+    use xlink::core::traits::MessageHandler;
+    use xlink::core::types::{DeviceCapabilities, DeviceType};
 
     struct NoOpHandler;
 
@@ -33,8 +33,8 @@ async fn create_memory_sdk(
     impl MessageHandler for NoOpHandler {
         async fn handle_message(
             &self,
-            _message: xpush::core::types::Message,
-        ) -> xpush::core::error::Result<()> {
+            _message: xlink::core::types::Message,
+        ) -> xlink::core::error::Result<()> {
             Ok(())
         }
     }
@@ -43,7 +43,7 @@ async fn create_memory_sdk(
         device_id,
         device_type: DeviceType::Smartphone,
         device_name: "Test Device".to_string(),
-        supported_channels: HashSet::from([xpush::core::types::ChannelType::Lan]),
+        supported_channels: HashSet::from([xlink::core::types::ChannelType::Lan]),
         battery_level: Some(80),
         is_charging: false,
         data_cost_sensitive: false,

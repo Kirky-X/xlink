@@ -8,10 +8,10 @@ mod common;
 use crate::common::{test_device_capabilities, test_device_id, NetworkSimulator, TestSdkBuilder};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use xpush::channels::bluetooth::BluetoothChannel;
-use xpush::channels::remote::RemoteChannel;
-use xpush::channels::wifi::WiFiDirectChannel;
-use xpush::core::types::{ChannelType, DeviceCapabilities, DeviceType, MessagePayload};
+use xlink::channels::bluetooth::BluetoothChannel;
+use xlink::channels::remote::RemoteChannel;
+use xlink::channels::wifi::WiFiDirectChannel;
+use xlink::core::types::{ChannelType, DeviceCapabilities, DeviceType, MessagePayload};
 
 // ==================== Bluetooth LE Tests ====================
 

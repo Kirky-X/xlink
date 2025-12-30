@@ -2,9 +2,9 @@ mod common;
 
 use crate::common::test_device_id;
 use std::net::SocketAddr;
-use xpush::channels::wifi::WiFiDirectChannel;
-use xpush::core::traits::Channel;
-use xpush::core::types::{ChannelType, Message, MessagePayload, NetworkType};
+use xlink::channels::wifi::WiFiDirectChannel;
+use xlink::core::traits::Channel;
+use xlink::core::types::{ChannelType, Message, MessagePayload, NetworkType};
 
 #[tokio::test]
 async fn test_wifi_direct_channel_creation() {

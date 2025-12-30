@@ -5,7 +5,7 @@
 use crate::common::{test_device_id, NetworkSimulator, TestSdkBuilder};
 use std::time::{Duration, Instant};
 use tokio::time::{sleep, timeout};
-use xpush::core::types::MessagePayload;
+use xlink::core::types::MessagePayload;
 
 mod common;
 

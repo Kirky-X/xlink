@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use uuid::Uuid;
-use xpush::core::types::{ChannelType, DeviceId};
-use xpush::crypto::engine::CryptoEngine;
-use xpush::router::predictor::RoutePredictor;
+use xlink::core::types::{ChannelType, DeviceId};
+use xlink::crypto::engine::CryptoEngine;
+use xlink::router::predictor::RoutePredictor;
 
 fn crypto_benchmark(c: &mut Criterion) {
     let engine = CryptoEngine::new();
