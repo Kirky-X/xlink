@@ -1,27 +1,28 @@
-use crate::core::error::{Result, XPushError};
-use crate::core::types::{DeviceId, GroupId, MessagePayload};
-use chacha20poly1305::aead::{Aead, KeyInit};
-use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use chacha20poly1305::{
+    aead::{Aead, OsRng},
+    KeyInit, XChaCha20Poly1305,
+};
 use dashmap::DashMap;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
-use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-// 32字节密钥
+use crate::core::error::XPushError;
+use crate::core::types::{DeviceId, GroupId, MessagePayload};
+
 type Key = [u8; 32];
 
-/// TreeKEM 节点结构
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TreeKemNode {
     pub node_id: u32,
-    pub public_key: Option<PublicKey>,
+    pub public_key: Option<Vec<u8>>,
     #[serde(skip)]
-    pub private_key: Option<StaticSecret>, // 仅叶子节点有私钥
+    pub private_key: Option<Vec<u8>>,
     pub parent_id: Option<u32>,
     pub children: Vec<u32>,
 }
@@ -30,7 +31,7 @@ impl std::fmt::Debug for TreeKemNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TreeKemNode")
             .field("node_id", &self.node_id)
-            .field("public_key", &self.public_key)
+            .field("public_key", &self.public_key.as_ref().map(|k| &k[..]))
             .field("private_key", &"<redacted>")
             .field("parent_id", &self.parent_id)
             .field("children", &self.children)
@@ -38,112 +39,98 @@ impl std::fmt::Debug for TreeKemNode {
     }
 }
 
-/// TreeKEM 群组状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeKemGroup {
     pub group_id: GroupId,
     pub tree: HashMap<u32, TreeKemNode>,
     pub epoch: u64,
     pub group_secret: Key,
-    pub member_devices: HashMap<DeviceId, u32>, // DeviceId -> NodeId mapping
+    pub member_devices: HashMap<DeviceId, u32>,
 }
 
-/// TreeKEM 更新路径
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePath {
     pub updater_id: DeviceId,
     pub path_secrets: Vec<Key>,
-    pub path_public_keys: Vec<PublicKey>,
+    pub path_public_keys: Vec<Vec<u8>>,
     pub epoch: u64,
 }
 
-/// TreeKEM 消息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TreeKemMessage {
-    Welcome {
-        group_id: GroupId,
-        tree_data: Vec<u8>,
-        group_secret: Key,
-        epoch: u64,
-    },
-    Update {
-        group_id: GroupId,
-        update_path: UpdatePath,
-        epoch: u64,
-    },
-    Commit {
-        group_id: GroupId,
-        update_path: UpdatePath,
-        proposals: Vec<Proposal>,
-        epoch: u64,
-    },
-}
-
-/// 提案类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Proposal {
-    Add {
-        device_id: DeviceId,
-        public_key: PublicKey,
-    },
-    Remove {
-        device_id: DeviceId,
-    },
-    Update {
-        device_id: DeviceId,
-        public_key: PublicKey,
-    },
-}
-
 pub struct TreeKemEngine {
-    // GroupId -> TreeKemGroup
-    groups: Arc<DashMap<GroupId, TreeKemGroup>>,
-    // DeviceId -> PublicKey (设备公钥存储)
-    device_public_keys: Arc<DashMap<DeviceId, PublicKey>>,
-    // 当前设备的ID
-    _local_device_id: DeviceId,
+    pub groups: Arc<DashMap<GroupId, TreeKemGroup>>,
+    pub device_public_keys: Arc<DashMap<DeviceId, Vec<u8>>>,
+    pub local_device_id: DeviceId,
+    pub local_private_key: StaticSecret,
+    pub signing_key: SigningKey,
 }
 
 impl TreeKemEngine {
     pub fn new(local_device_id: DeviceId) -> Self {
+        let local_private_key = StaticSecret::random_from_rng(OsRng);
+        let signing_key = SigningKey::generate(&mut OsRng);
+
         Self {
             groups: Arc::new(DashMap::new()),
             device_public_keys: Arc::new(DashMap::new()),
-            _local_device_id: local_device_id,
+            local_device_id,
+            local_private_key,
+            signing_key,
         }
     }
 
-    /// 创建新的TreeKEM群组
+    pub fn register_device_key(&self, device_id: DeviceId, public_key: X25519PublicKey) {
+        self.device_public_keys
+            .insert(device_id, public_key.to_bytes().to_vec());
+    }
+
+    pub fn get_device_public_key(&self, device_id: DeviceId) -> Result<Vec<u8>, XPushError> {
+        self.device_public_keys
+            .get(&device_id)
+            .map(|k| k.clone())
+            .ok_or_else(|| XPushError::key_derivation_failed("X25519", &format!("Device key not found: {}", device_id), file!()))
+    }
+
+    pub fn clear_keys(&self) {
+        self.groups.clear();
+        self.device_public_keys.clear();
+    }
+
     pub fn create_group(
         &self,
         group_id: GroupId,
-        initial_members: Vec<(DeviceId, PublicKey)>,
-    ) -> Result<TreeKemGroup> {
+        member_ids: Vec<DeviceId>,
+    ) -> Result<TreeKemGroup, XPushError> {
         let mut tree = HashMap::new();
         let mut member_devices = HashMap::new();
 
-        // 创建平衡的树结构
-        let (root_id, tree_nodes) = self.build_balanced_tree(&initial_members);
+        let mut secret = [0u8; 32];
+        OsRng.fill_bytes(&mut secret);
 
-        for node in tree_nodes {
-            tree.insert(node.node_id, node.clone());
-            if let Some(device_id) = initial_members
-                .iter()
-                .find(|(_, pk)| node.public_key == Some(*pk))
-                .map(|(id, _)| *id)
-            {
-                member_devices.insert(device_id, node.node_id);
+        for (index, member_id) in member_ids.iter().enumerate() {
+            let node_id = (index + 1) as u32;
+            let node = TreeKemNode {
+                node_id,
+                public_key: self.device_public_keys.get(member_id).map(|k| k.clone()),
+                private_key: None,
+                parent_id: None,
+                children: vec![],
+            };
+            tree.insert(node_id, node);
+            member_devices.insert(*member_id, node_id);
+
+            let parent_id = node_id / 2;
+            if parent_id > 0 {
+                if let Some(parent) = tree.get_mut(&parent_id) {
+                    parent.children.push(node_id);
+                }
             }
         }
-
-        // 生成群组密钥
-        let group_secret = self.generate_group_secret(&tree, root_id)?;
 
         let group = TreeKemGroup {
             group_id,
             tree,
             epoch: 0,
-            group_secret,
+            group_secret: secret,
             member_devices,
         };
 
@@ -151,440 +138,257 @@ impl TreeKemEngine {
         Ok(group)
     }
 
-    /// 构建平衡的树结构
-    fn build_balanced_tree(&self, members: &[(DeviceId, PublicKey)]) -> (u32, Vec<TreeKemNode>) {
-        let n = members.len();
-        if n == 0 {
-            return (0, vec![]);
-        }
+    pub fn encrypt_group_message(
+        &self,
+        group_id: GroupId,
+        payload: &MessagePayload,
+    ) -> Result<MessagePayload, XPushError> {
+        let group = self
+            .groups
+            .get(&group_id)
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
-        let mut nodes = Vec::new();
-        let mut node_id = 1u32;
+        let plaintext = serde_json::to_vec(payload)
+            .map_err(Into::<XPushError>::into)?;
 
-        // 创建叶子节点（成员节点）
-        for (_device_id, public_key) in members {
-            let node = TreeKemNode {
-                node_id,
-                public_key: Some(*public_key),
-                private_key: None, // 只有设备自己知道私钥
-                parent_id: None,
-                children: vec![],
-            };
-            nodes.push(node);
-            node_id += 1;
-        }
+        let mut nonce_bytes = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = chacha20poly1305::XNonce::from(nonce_bytes);
 
-        // 构建父节点直到根节点
-        let mut current_level = (0..n).collect::<Vec<_>>();
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
+        let cipher = XChaCha20Poly1305::new_from_slice(&group.group_secret)
+            .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 init", &e.to_string(), file!()))?;
 
-            for i in (0..current_level.len()).step_by(2) {
-                let left_idx = current_level[i];
-                let right_idx = if i + 1 < current_level.len() {
-                    current_level[i + 1]
-                } else {
-                    current_level[i] // 奇数个节点时复制最后一个
-                };
+        let ciphertext = cipher
+            .encrypt(&nonce, &*plaintext)
+            .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 encrypt", &e.to_string(), file!()))?;
 
-                // 创建父节点
-                let parent_node = TreeKemNode {
-                    node_id,
-                    public_key: None, // 父节点没有长期密钥
-                    private_key: None,
-                    parent_id: None,
-                    children: vec![nodes[left_idx].node_id, nodes[right_idx].node_id],
-                };
+        let mut result = nonce_bytes.to_vec();
+        result.extend_from_slice(&ciphertext);
+        Ok(MessagePayload::Binary(result))
+    }
 
-                // 更新子节点的父节点引用
-                if let Some(left_node) = nodes.get_mut(left_idx) {
-                    left_node.parent_id = Some(node_id);
-                }
-                if let Some(right_node) = nodes.get_mut(right_idx) {
-                    right_node.parent_id = Some(node_id);
+    pub fn decrypt_group_message(
+        &self,
+        group_id: GroupId,
+        payload: &MessagePayload,
+    ) -> Result<MessagePayload, XPushError> {
+        match payload {
+            MessagePayload::Binary(ciphertext) => {
+                if ciphertext.len() < 24 {
+                    return Err(XPushError::invalid_ciphertext(
+                        "Ciphertext too short".to_string(),
+                        file!(),
+                    ));
                 }
 
-                next_level.push(nodes.len());
-                nodes.push(parent_node);
-                node_id += 1;
+                let group = self.groups.get(&group_id).ok_or_else(|| {
+                    XPushError::group_not_found(group_id.to_string(), file!())
+                })?;
+
+                let mut nonce_bytes = [0u8; 24];
+                nonce_bytes.copy_from_slice(&ciphertext[0..24]);
+                let nonce = chacha20poly1305::XNonce::from(nonce_bytes);
+
+                let cipher = XChaCha20Poly1305::new_from_slice(&group.group_secret)
+                    .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 init", &e.to_string(), file!()))?;
+
+                let decrypted = cipher
+                    .decrypt(&nonce, &ciphertext[24..])
+                    .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 decrypt", &e.to_string(), file!()))?;
+
+                let payload: MessagePayload =
+                    serde_json::from_slice(&decrypted).map_err(Into::<XPushError>::into)?;
+
+                Ok(payload)
             }
-
-            current_level = next_level;
-        }
-
-        let root_id = if let Some(&root_idx) = current_level.first() {
-            nodes[root_idx].node_id
-        } else {
-            0
-        };
-
-        (root_id, nodes)
-    }
-
-    /// 生成群组密钥
-    fn generate_group_secret(&self, tree: &HashMap<u32, TreeKemNode>, root_id: u32) -> Result<Key> {
-        // 使用根节点的路径密钥生成群组密钥
-        let root_node = tree
-            .get(&root_id)
-            .ok_or_else(|| XPushError::CryptoError("Root node not found".into()))?;
-
-        // 简化的群组密钥生成：使用根节点的公钥哈希
-        if let Some(public_key) = root_node.public_key {
-            let mut hasher = sha2::Sha256::new();
-            use sha2::Digest;
-            hasher.update(public_key.as_bytes());
-            let result = hasher.finalize();
-
-            let mut secret = [0u8; 32];
-            secret.copy_from_slice(&result[..32]);
-            Ok(secret)
-        } else {
-            // 生成随机群组密钥
-            let mut secret = [0u8; 32];
-            OsRng.fill_bytes(&mut secret);
-            Ok(secret)
+            _ => Err(XPushError::invalid_payload_type(
+                "Expected binary payload for group message".to_string(),
+                &[],
+                file!(),
+            )),
         }
     }
 
-    /// 更新群组密钥（前向保密）
-    pub fn update_group_key(&self, group_id: GroupId, updater_id: DeviceId) -> Result<UpdatePath> {
+    pub fn rotate_group_key(&self, group_id: GroupId) -> Result<(), XPushError> {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::CryptoError("Group not found".into()))?;
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
-        // 生成新的更新路径
-        let update_path = self.generate_update_path(&group, updater_id)?;
+        let mut new_secret = [0u8; 32];
+        OsRng.fill_bytes(&mut new_secret);
 
-        // 更新群组密钥
+        let info = b"XPush_TreeKEM_KeyRotation_v1".to_vec();
+        let hkdf = Hkdf::<Sha256>::new(Some(&group.group_secret), &new_secret);
+        let mut okm = [0u8; 64];
+        hkdf.expand(&info, &mut okm).unwrap();
+
+        group.group_secret.copy_from_slice(&okm[0..32]);
         group.epoch += 1;
-        group.group_secret = self.derive_new_group_secret(&update_path.path_secrets)?;
 
-        Ok(update_path)
+        Ok(())
     }
 
-    /// 生成更新路径
-    fn generate_update_path(
+    pub fn update_group_key(
         &self,
-        group: &TreeKemGroup,
-        updater_id: DeviceId,
-    ) -> Result<UpdatePath> {
-        let updater_node_id = group
-            .member_devices
-            .get(&updater_id)
-            .ok_or_else(|| XPushError::CryptoError("Updater not in group".into()))?;
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<UpdatePath, XPushError> {
+        self.rotate_group_key(group_id)?;
+        self.add_member(group_id, device_id)
+    }
 
-        let mut path_secrets = Vec::new();
-        let mut path_public_keys = Vec::new();
-        let mut current_node_id = *updater_node_id;
+    pub fn apply_update_path(
+        &self,
+        group_id: GroupId,
+        update_path: &UpdatePath,
+    ) -> Result<(), XPushError> {
+        let mut group = self
+            .groups
+            .get_mut(&group_id)
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
-        // 从更新者节点到根节点的路径
-        while let Some(node) = group.tree.get(&current_node_id) {
-            // 生成新的路径密钥
-            let mut path_secret = [0u8; 32];
-            OsRng.fill_bytes(&mut path_secret);
-
-            // 生成对应的公钥
-            let ephemeral_secret = EphemeralSecret::random_from_rng(OsRng);
-            let public_key = PublicKey::from(&ephemeral_secret);
-
-            path_secrets.push(path_secret);
-            path_public_keys.push(public_key);
-
-            // 移动到父节点
-            if let Some(parent_id) = node.parent_id {
-                current_node_id = parent_id;
-            } else {
-                break; // 到达根节点
+        for (i, path_secret) in update_path.path_secrets.iter().enumerate() {
+            let node_id = (i + 1) as u32;
+            if let Some(node) = group.tree.get_mut(&node_id) {
+                node.private_key = Some(path_secret.to_vec());
             }
         }
 
+        group.epoch = update_path.epoch;
+        Ok(())
+    }
+
+    pub fn add_member(
+        &self,
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<UpdatePath, XPushError> {
+        let mut group = self
+            .groups
+            .get_mut(&group_id)
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+
+        let new_node_id = (group.tree.len() + 1) as u32;
+        let private_key = StaticSecret::random_from_rng(OsRng);
+        let public_key = X25519PublicKey::from(&private_key);
+
+        let node = TreeKemNode {
+            node_id: new_node_id,
+            public_key: Some(public_key.to_bytes().to_vec()),
+            private_key: Some(private_key.to_bytes().to_vec()),
+            parent_id: None,
+            children: vec![],
+        };
+
+        group.tree.insert(new_node_id, node);
+        group.member_devices.insert(device_id, new_node_id);
+
+        let secret = Self::derive_path_secret(&group.group_secret, new_node_id);
+
+        let info = b"XPush_TreeKEM_PathSecret";
+        let hkdf = Hkdf::<Sha256>::new(None, &secret);
+        let mut okm = [0u8; 64];
+        hkdf.expand(info, &mut okm).unwrap();
+
+        let path_secret = {
+            let mut ps = [0u8; 32];
+            ps.copy_from_slice(&okm[0..32]);
+            ps
+        };
+
+        let mut path_secrets = vec![path_secret];
+        let mut current_node = new_node_id;
+        while current_node > 0 {
+            let parent_id = current_node / 2;
+            if parent_id == 0 {
+                break;
+            }
+            let secret = Self::derive_path_secret(path_secrets.last().unwrap(), parent_id);
+            let info = b"XPush_TreeKEM_PathSecret";
+            let hkdf = Hkdf::<Sha256>::new(None, &secret);
+            let mut okm = [0u8; 64];
+            hkdf.expand(info, &mut okm).unwrap();
+
+            let parent_secret = {
+                let mut ps = [0u8; 32];
+                ps.copy_from_slice(&okm[0..32]);
+                ps
+            };
+            path_secrets.push(parent_secret);
+            current_node = parent_id;
+        }
+
+        let mut path_public_keys = vec![];
+        let mut current_node = new_node_id;
+        while current_node > 0 {
+            let parent_id = current_node / 2;
+            if parent_id == 0 {
+                break;
+            }
+            if let Some(parent) = group.tree.get(&parent_id) {
+                if let Some(pk) = &parent.public_key {
+                    path_public_keys.push(pk.clone());
+                }
+            }
+            current_node = parent_id;
+        }
+
         Ok(UpdatePath {
-            updater_id,
+            updater_id: self.local_device_id,
             path_secrets,
             path_public_keys,
             epoch: group.epoch,
         })
     }
 
-    /// 派生新的群组密钥
-    fn derive_new_group_secret(&self, path_secrets: &[Key]) -> Result<Key> {
-        if path_secrets.is_empty() {
-            return Err(XPushError::CryptoError("No path secrets".into()));
-        }
-
-        // 使用最后一个路径密钥派生新的群组密钥
-        let last_secret = path_secrets.last().unwrap();
-        let hk = Hkdf::<Sha256>::new(None, last_secret);
-        let mut new_group_secret = [0u8; 32];
-        hk.expand(b"group_secret", &mut new_group_secret)
-            .map_err(|e| XPushError::CryptoError(e.to_string()))?;
-
-        Ok(new_group_secret)
-    }
-
-    /// 加密群组消息
-    pub fn encrypt_group_message(
-        &self,
-        group_id: GroupId,
-        payload: &MessagePayload,
-    ) -> Result<MessagePayload> {
-        let group = self
-            .groups
-            .get(&group_id)
-            .ok_or_else(|| XPushError::CryptoError("Group not found".into()))?;
-
-        // 序列化消息负载
-        let plaintext = serde_json::to_vec(payload)
-            .map_err(|e| XPushError::CryptoError(format!("Failed to serialize payload: {}", e)))?;
-
-        // 使用 ChaCha20-Poly1305 加密
-        let cipher = ChaCha20Poly1305::new(&group.group_secret.into());
-        let nonce_bytes = rand::random::<[u8; 12]>();
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let ciphertext = cipher
-            .encrypt(nonce, plaintext.as_ref())
-            .map_err(|e| XPushError::CryptoError(e.to_string()))?;
-
-        // 打包: Epoch + Nonce + Ciphertext
-        let mut result = Vec::with_capacity(8 + 12 + ciphertext.len());
-        result.extend_from_slice(&group.epoch.to_be_bytes());
-        result.extend_from_slice(&nonce_bytes);
-        result.extend_from_slice(&ciphertext);
-
-        Ok(MessagePayload::Binary(result))
-    }
-
-    /// 解密群组消息
-    pub fn decrypt_group_message(
-        &self,
-        group_id: GroupId,
-        encrypted_payload: &MessagePayload,
-    ) -> Result<MessagePayload> {
-        let ciphertext_data = match encrypted_payload {
-            MessagePayload::Binary(data) => data,
-            _ => return Ok(encrypted_payload.clone()), // 非加密消息直接返回
-        };
-
-        if ciphertext_data.len() < 20 {
-            // 8 (epoch) + 12 (nonce)
-            return Err(XPushError::CryptoError("Data too short".into()));
-        }
-
-        let group = self
-            .groups
-            .get(&group_id)
-            .ok_or_else(|| XPushError::CryptoError("Group not found".into()))?;
-
-        // 解析数据
-        let epoch = u64::from_be_bytes([
-            ciphertext_data[0],
-            ciphertext_data[1],
-            ciphertext_data[2],
-            ciphertext_data[3],
-            ciphertext_data[4],
-            ciphertext_data[5],
-            ciphertext_data[6],
-            ciphertext_data[7],
-        ]);
-
-        // 检查epoch是否匹配
-        if epoch != group.epoch {
-            return Err(XPushError::CryptoError(format!(
-                "Epoch mismatch: expected {}, got {}",
-                group.epoch, epoch
-            )));
-        }
-
-        let nonce = Nonce::from_slice(&ciphertext_data[8..20]);
-        let ciphertext = &ciphertext_data[20..];
-
-        // 使用群组密钥解密
-        let cipher = ChaCha20Poly1305::new(&group.group_secret.into());
-        let plaintext = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| XPushError::CryptoError(e.to_string()))?;
-
-        // 反序列化消息负载
-        serde_json::from_slice(&plaintext)
-            .map_err(|e| XPushError::CryptoError(format!("Failed to deserialize payload: {}", e)))
-    }
-
-    /// 添加成员到群组
-    pub fn add_member(
-        &self,
-        group_id: GroupId,
-        device_id: DeviceId,
-        public_key: PublicKey,
-    ) -> Result<()> {
+    pub fn remove_member(&self, group_id: GroupId, device_id: DeviceId) -> Result<(), XPushError> {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::CryptoError("Group not found".into()))?;
+            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
-        if group.member_devices.contains_key(&device_id) {
-            return Err(XPushError::CryptoError("Device already in group".into()));
-        }
-
-        // 创建新的叶子节点
-        let new_node_id = group.tree.len() as u32 + 1;
-        let new_node = TreeKemNode {
-            node_id: new_node_id,
-            public_key: Some(public_key),
-            private_key: None,
-            parent_id: None,
-            children: vec![],
-        };
-
-        group.tree.insert(new_node_id, new_node);
-        group.member_devices.insert(device_id, new_node_id);
-
-        // 重新平衡树结构（简化实现）
-        self.rebalance_tree(&mut group)?;
-
-        Ok(())
-    }
-
-    /// 从群组中移除成员
-    pub fn remove_member(&self, group_id: GroupId, device_id: DeviceId) -> Result<()> {
-        let mut group = match self.groups.get_mut(&group_id) {
-            Some(g) => g,
-            None => return Ok(()), // 如果群组不存在，直接返回成功（幂等性）
-        };
-
-        let node_id = match group.member_devices.remove(&device_id) {
-            Some(id) => id,
-            None => return Ok(()), // 如果设备不在群组中，直接返回成功
-        };
-
-        // 从树中移除节点
-        group.tree.remove(&node_id);
-
-        // 重新平衡树结构
-        self.rebalance_tree(&mut group)?;
-
-        Ok(())
-    }
-
-    /// 重新平衡树结构（简化实现）
-    fn rebalance_tree(&self, group: &mut TreeKemGroup) -> Result<()> {
-        // 获取所有叶子节点（成员节点）
-        let leaf_nodes: Vec<_> = group
-            .tree
-            .values()
-            .filter(|node| node.public_key.is_some())
-            .cloned()
-            .collect();
-
-        if leaf_nodes.is_empty() {
-            return Ok(());
-        }
-
-        // 重新构建平衡的树
-        let (_new_root_id, new_nodes) = self.build_balanced_tree(
-            &leaf_nodes
-                .iter()
-                .filter_map(|node| {
-                    group
-                        .member_devices
-                        .iter()
-                        .find(|(_, &node_id)| node_id == node.node_id)
-                        .map(|(device_id, _)| (*device_id, node.public_key.unwrap()))
-                })
-                .collect::<Vec<_>>(),
-        );
-
-        // 更新树结构
-        group.tree.clear();
-        for node in new_nodes {
-            group.tree.insert(node.node_id, node);
-        }
-
-        // 更新成员映射
-        group.member_devices.clear();
-        for node in leaf_nodes {
-            if let Some(device_id) = group
-                .member_devices
-                .iter()
-                .find(|(_, &node_id)| node_id == node.node_id)
-                .map(|(id, _)| *id)
-            {
-                group.member_devices.insert(device_id, node.node_id);
+        if let Some(&node_id) = group.member_devices.get(&device_id) {
+            if let Some(node) = group.tree.get_mut(&node_id) {
+                node.public_key = None;
+                node.private_key = None;
             }
+            group.member_devices.remove(&device_id);
         }
 
         Ok(())
     }
 
-    /// 获取群组信息
-    pub fn get_group(&self, group_id: GroupId) -> Option<TreeKemGroup> {
-        self.groups.get(&group_id).map(|g| g.clone())
+    fn derive_path_secret(secret: &Key, node_id: u32) -> Key {
+        let mut info = b"XPush_TreeKEM_PathSecret_v1".to_vec();
+        info.extend_from_slice(&node_id.to_le_bytes());
+
+        let hkdf = Hkdf::<Sha256>::new(Some(secret), secret);
+        let mut okm = [0u8; 32];
+        hkdf.expand(&info, &mut okm).unwrap();
+        okm
     }
 
-    /// 获取所有群组
-    pub fn get_all_groups(&self) -> Vec<GroupId> {
-        self.groups.iter().map(|entry| *entry.key()).collect()
+    pub fn sign_message(&self, data: &[u8]) -> Result<Signature, XPushError> {
+        self.signing_key
+            .try_sign(data)
+            .map_err(|e| XPushError::crypto_init_failed(&format!("Ed25519 signature creation failed: {}", e), file!()))
     }
 
-    /// 注册设备公钥
-    pub fn register_device_key(&self, device_id: DeviceId, public_key: PublicKey) -> Result<()> {
-        self.device_public_keys.insert(device_id, public_key);
-        Ok(())
-    }
-
-    /// 获取设备公钥
-    pub fn get_device_public_key(&self, device_id: DeviceId) -> Result<PublicKey> {
-        self.device_public_keys
-            .get(&device_id)
-            .map(|entry| *entry.value())
-            .ok_or_else(|| {
-                XPushError::CryptoError(format!("Public key for device {} not found", device_id))
-            })
-    }
-
-    /// 应用密钥更新路径
-    pub fn apply_update_path(&self, group_id: GroupId, update_path: &UpdatePath) -> Result<()> {
-        let mut group = self
-            .groups
-            .get_mut(&group_id)
-            .ok_or_else(|| XPushError::CryptoError("Group not found".into()))?;
-
-        // 验证更新路径的有效性
-        if update_path.epoch != group.epoch + 1 {
-            return Err(XPushError::CryptoError(format!(
-                "Invalid epoch: expected {}, got {}",
-                group.epoch + 1,
-                update_path.epoch
-            )));
-        }
-
-        // 更新群组密钥
-        group.epoch = update_path.epoch;
-        group.group_secret = self.derive_new_group_secret(&update_path.path_secrets)?;
-
-        log::info!(
-            "Applied update path for group {} at epoch {}",
-            group_id,
-            group.epoch
-        );
-        Ok(())
-    }
-
-    /// 清理所有数据，防止内存泄漏 - use proper entry removal to avoid DashMap fragmentation
-    pub fn clear_keys(&self) {
-        let group_keys: Vec<_> = self.groups.iter().map(|entry| *entry.key()).collect();
-        for group_id in group_keys {
-            self.groups.remove(&group_id);
-        }
-
-        let device_keys: Vec<_> = self
-            .device_public_keys
-            .iter()
-            .map(|entry| *entry.key())
-            .collect();
-        for device_id in device_keys {
-            self.device_public_keys.remove(&device_id);
-        }
+    pub fn verify_signature(
+        &self,
+        data: &[u8],
+        signature: &Signature,
+        public_key: &[u8],
+    ) -> Result<bool, XPushError> {
+        let pk: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| XPushError::crypto_init_failed("Invalid Ed25519 public key length", file!()))?;
+        let verifying_key =
+            VerifyingKey::from_bytes(&pk).map_err(|e| XPushError::crypto_init_failed(&format!("Invalid Ed25519 public key: {}", e), file!()))?;
+        verifying_key
+            .verify(data, signature)
+            .map(|_| true)
+            .map_err(|e| XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!()))
     }
 }

@@ -12,21 +12,14 @@ use sha2::Sha256;
 use std::sync::{Arc, Mutex};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-// 32字节密钥
 type Key = [u8; 32];
 
-/// 会话状态，包含发送和接收链的密钥
 #[derive(Serialize, Deserialize)]
 struct SessionState {
-    // 根密钥，用于派生新的链密钥
     _root_key: Key,
-    // 发送链密钥
     send_chain_key: Key,
-    // 接收链密钥
     recv_chain_key: Key,
-    // 发送计数器
     send_ratchet_counter: u32,
-    // 远端验证密钥 (Ed25519)
     #[serde(with = "verifying_key_serde")]
     peer_verifying_key: Option<VerifyingKey>,
 }
@@ -69,21 +62,19 @@ mod verifying_key_serde {
     }
 }
 
-/// 导出的加密引擎状态
 #[derive(Serialize, Deserialize)]
 pub struct CryptoState {
     pub static_secret: [u8; 32],
     pub signing_key: [u8; 32],
-    pub sessions: Vec<(DeviceId, Vec<u8>)>, // 使用 JSON 序列化后的 SessionState
+    pub sessions: Vec<(DeviceId, Vec<u8>)>,
 }
 
 impl SessionState {
     fn new(shared_secret: Key, peer_verifying_key: Option<VerifyingKey>) -> Result<Self> {
-        // 初始化：使用共享密钥作为根密钥，并派生初始链密钥
         let (root, chain) = kdf_rk(&shared_secret, b"init")?;
         Ok(Self {
             _root_key: root,
-            send_chain_key: chain, // 简化：初始双方对称，实际需区分 Initiator/Responder
+            send_chain_key: chain,
             recv_chain_key: chain,
             send_ratchet_counter: 0,
             peer_verifying_key,
@@ -91,18 +82,11 @@ impl SessionState {
     }
 }
 
-impl Default for CryptoEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// 密钥派生函数 (Root Key KDF)
 fn kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
     let hk = Hkdf::<Sha256>::new(Some(rk), info);
     let mut okm = [0u8; 64];
     hk.expand(&[], &mut okm)
-        .map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
+        .map_err(|e| XPushError::key_derivation_failed("HKDF-RK", &e.to_string(), file!()))?;
     let mut new_rk = [0u8; 32];
     let mut new_ck = [0u8; 32];
     new_rk.copy_from_slice(&okm[0..32]);
@@ -110,12 +94,11 @@ fn kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
     Ok((new_rk, new_ck))
 }
 
-/// 链密钥派生函数 (Chain Key KDF) -> (Next Chain Key, Message Key)
 fn kdf_ck(ck: &Key) -> Result<(Key, Key)> {
     let hk = Hkdf::<Sha256>::new(Some(ck), b"message_key");
     let mut okm = [0u8; 64];
     hk.expand(&[], &mut okm)
-        .map_err(|e| XPushError::CryptoError(format!("HKDF expand failed: {}", e)))?;
+        .map_err(|e| XPushError::key_derivation_failed("HKDF-CK", &e.to_string(), file!()))?;
     let mut next_ck = [0u8; 32];
     let mut msg_key = [0u8; 32];
     next_ck.copy_from_slice(&okm[0..32]);
@@ -127,8 +110,13 @@ pub struct CryptoEngine {
     static_secret: StaticSecret,
     public_key: PublicKey,
     signing_key: SigningKey,
-    // DeviceId -> SessionState
     sessions: Arc<DashMap<DeviceId, Mutex<SessionState>>>,
+}
+
+impl Default for CryptoEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CryptoEngine {
@@ -136,6 +124,7 @@ impl CryptoEngine {
         let secret = StaticSecret::random_from_rng(OsRng);
         let public = PublicKey::from(&secret);
         let signing_key = SigningKey::generate(&mut OsRng);
+
         Self {
             static_secret: secret,
             public_key: public,
@@ -152,7 +141,6 @@ impl CryptoEngine {
         self.signing_key.verifying_key()
     }
 
-    /// 导出加密引擎状态，用于设备迁移
     pub fn export_state(&self) -> Result<CryptoState> {
         let mut session_data = Vec::new();
         for entry in self.sessions.iter() {
@@ -160,10 +148,9 @@ impl CryptoEngine {
             let session = entry
                 .value()
                 .lock()
-                .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
-            let serialized = serde_json::to_vec(&*session).map_err(|e| {
-                XPushError::CryptoError(format!("Failed to serialize session: {}", e))
-            })?;
+                .map_err(|_| XPushError::resource_exhausted("Session mutex poisoned".to_string(), 0, 0, file!()))?;
+            let serialized = serde_json::to_vec(&*session)
+                .map_err(Into::<XPushError>::into)?;
             session_data.push((device_id, serialized));
         }
 
@@ -174,7 +161,6 @@ impl CryptoEngine {
         })
     }
 
-    /// 从导出的状态导入，用于设备迁移
     pub fn import_state(state: CryptoState) -> Result<Self> {
         let static_secret = StaticSecret::from(state.static_secret);
         let public_key = PublicKey::from(&static_secret);
@@ -182,9 +168,8 @@ impl CryptoEngine {
 
         let sessions = Arc::new(DashMap::new());
         for (device_id, serialized) in state.sessions {
-            let session: SessionState = serde_json::from_slice(&serialized).map_err(|e| {
-                XPushError::CryptoError(format!("Failed to deserialize session: {}", e))
-            })?;
+            let session: SessionState = serde_json::from_slice(&serialized)
+                .map_err(Into::<XPushError>::into)?;
             sessions.insert(device_id, Mutex::new(session));
         }
 
@@ -196,16 +181,13 @@ impl CryptoEngine {
         })
     }
 
-    /// 清理所有会话，防止内存泄漏 - use proper entry removal to avoid DashMap fragmentation
     pub fn clear_sessions(&self) {
-        // Remove sessions entries one by one to avoid fragmentation
         let session_keys: Vec<_> = self.sessions.iter().map(|entry| *entry.key()).collect();
         for device_id in session_keys {
             self.sessions.remove(&device_id);
         }
     }
 
-    /// 建立会话（模拟 X3DH 的最后一步）
     pub fn establish_session(&self, peer_id: DeviceId, peer_public: PublicKey) -> Result<()> {
         let shared_secret = self.static_secret.diffie_hellman(&peer_public);
         let session = SessionState::new(*shared_secret.as_bytes(), None)?;
@@ -213,7 +195,6 @@ impl CryptoEngine {
         Ok(())
     }
 
-    /// 建立带身份验证的会话
     pub fn establish_authenticated_session(
         &self,
         peer_id: DeviceId,
@@ -226,49 +207,44 @@ impl CryptoEngine {
         Ok(())
     }
 
-    /// 对数据进行签名
     pub fn sign(&self, data: &[u8]) -> Vec<u8> {
         self.signing_key.sign(data).to_bytes().to_vec()
     }
 
-    /// 验证签名
     pub fn verify(&self, peer_id: &DeviceId, data: &[u8], signature_bytes: &[u8]) -> Result<()> {
         let session_guard = self
             .sessions
             .get(peer_id)
-            .ok_or(XPushError::CryptoError("Session not established".into()))?;
+            .ok_or_else(|| XPushError::device_not_found(peer_id.to_string(), file!()))?;
         let session = session_guard
             .lock()
-            .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
+            .map_err(|_| XPushError::resource_exhausted("Session mutex poisoned".to_string(), 0, 0, file!()))?;
 
         let verifying_key = session
             .peer_verifying_key
-            .ok_or(XPushError::CryptoError("No verifying key for peer".into()))?;
+            .ok_or_else(|| XPushError::invalid_input("verifying_key", "No verifying key for peer", file!()))?;
 
         let signature = Signature::from_slice(signature_bytes)
-            .map_err(|e| XPushError::CryptoError(format!("Invalid signature format: {}", e)))?;
+            .map_err(|e| XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!()))?;
 
         verifying_key
             .verify(data, &signature)
-            .map_err(|_| XPushError::CryptoError("Signature verification failed".into()))
+            .map_err(|e| XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!()))
     }
 
-    /// 加密消息并滚动棘轮 (Forward Secrecy)
     pub fn encrypt(&self, peer_id: &DeviceId, plaintext: &[u8]) -> Result<Vec<u8>> {
         let session_guard = self
             .sessions
             .get(peer_id)
-            .ok_or(XPushError::CryptoError("Session not established".into()))?;
+            .ok_or_else(|| XPushError::device_not_found(peer_id.to_string(), file!()))?;
         let mut session = session_guard
             .lock()
-            .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
+            .map_err(|_| XPushError::resource_exhausted("Session mutex poisoned".to_string(), 0, 0, file!()))?;
 
-        // 1. 棘轮步进：生成消息密钥
         let (next_ck, msg_key) = kdf_ck(&session.send_chain_key)?;
         session.send_chain_key = next_ck;
         session.send_ratchet_counter += 1;
 
-        // 2. 加密
         let cipher = ChaCha20Poly1305::new(&msg_key.into());
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
@@ -276,42 +252,41 @@ impl CryptoEngine {
 
         let ciphertext = cipher
             .encrypt(nonce, plaintext)
-            .map_err(|e| XPushError::CryptoError(e.to_string()))?;
+            .map_err(|e| XPushError::encryption_failed("ChaCha20Poly1305", &e.to_string(), file!()))?;
 
-        // 3. 打包: Nonce + Ciphertext
         let mut result = Vec::with_capacity(12 + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
-
         Ok(result)
     }
 
-    /// 解密消息并滚动接收棘轮
     pub fn decrypt(&self, peer_id: &DeviceId, ciphertext_data: &[u8]) -> Result<Vec<u8>> {
         if ciphertext_data.len() < 12 {
-            return Err(XPushError::CryptoError("Data too short".into()));
+            return Err(XPushError::invalid_ciphertext(
+                "Ciphertext too short (minimum 12 bytes for nonce)".to_string(),
+                file!(),
+            ));
         }
 
         let session_guard = self
             .sessions
             .get(peer_id)
-            .ok_or(XPushError::CryptoError("Session not established".into()))?;
+            .ok_or_else(|| XPushError::device_not_found(peer_id.to_string(), file!()))?;
         let mut session = session_guard
             .lock()
-            .map_err(|_| XPushError::CryptoError("Session mutex poisoned".into()))?;
+            .map_err(|_| XPushError::resource_exhausted("Session mutex poisoned".to_string(), 0, 0, file!()))?;
 
-        // 1. 棘轮步进：生成消息密钥
-        // 注意：真实实现需要处理乱序消息（保存跳过的 Message Keys），这里简化为必须顺序接收
         let (next_ck, msg_key) = kdf_ck(&session.recv_chain_key)?;
         session.recv_chain_key = next_ck;
 
-        // 2. 解密
         let cipher = ChaCha20Poly1305::new(&msg_key.into());
         let nonce = Nonce::from_slice(&ciphertext_data[..12]);
         let ciphertext = &ciphertext_data[12..];
 
         cipher
             .decrypt(nonce, ciphertext)
-            .map_err(|e| XPushError::CryptoError(e.to_string()))
+            .map_err(|e| XPushError::encryption_failed("ChaCha20Poly1305", &e.to_string(), file!()))
     }
 }
+
+pub type PublicKeyAlias = PublicKey;
