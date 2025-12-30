@@ -46,10 +46,10 @@ impl Channel for WiFiDirectChannel {
             return Ok(());
         }
 
-        Err(XPushError::ChannelError(format!(
-            "Device {} not connected via WiFi Direct",
-            message.recipient
-        )))
+        Err(XPushError::channel_init_failed(
+            format!("Device {} not connected via WiFi Direct", message.recipient),
+            file!(),
+        ))
     }
 
     async fn check_state(&self, target: &DeviceId) -> Result<ChannelState> {

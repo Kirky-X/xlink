@@ -22,7 +22,7 @@ impl LanChannel {
     pub async fn new(local_addr: SocketAddr, handler: Arc<dyn MessageHandler>) -> Result<Self> {
         let socket = UdpSocket::bind(local_addr)
             .await
-            .map_err(XPushError::IoError)?;
+            .map_err(std::io::Error::from)?;
 
         Ok(Self {
             local_addr,
@@ -52,20 +52,21 @@ impl Channel for LanChannel {
 
         match target_addr {
             Some(addr) => {
-                let data = serde_json::to_vec(&message).map_err(XPushError::SerializationError)?;
+                let data = serde_json::to_vec(&message)
+                    .map_err(serde_json::Error::from)?;
 
                 self.socket
                     .send_to(&data, addr)
                     .await
-                    .map_err(XPushError::IoError)?;
+                    .map_err(std::io::Error::from)?;
 
                 log::info!("[LanChannel] Sent message {} to {}", message.id, addr);
                 Ok(())
             }
-            None => Err(XPushError::ChannelError(format!(
-                "No address known for device {}",
-                message.recipient
-            ))),
+            None => Err(XPushError::channel_init_failed(
+                format!("No address known for device {}", message.recipient),
+                file!(),
+            )),
         }
     }
 

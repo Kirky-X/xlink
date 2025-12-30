@@ -50,10 +50,10 @@ impl Channel for BluetoothChannel {
             }
         }
 
-        Err(XPushError::ChannelError(format!(
-            "Device {} not connected via Bluetooth",
-            message.recipient
-        )))
+        Err(XPushError::channel_init_failed(
+            format!("Device {} not connected via Bluetooth", message.recipient),
+            file!(),
+        ))
     }
 
     async fn check_state(&self, target: &DeviceId) -> Result<ChannelState> {

@@ -68,8 +68,9 @@ impl Channel for MemoryChannel {
 
     async fn send(&self, message: Message) -> Result<()> {
         if *self.should_fail.lock().await {
-            return Err(crate::core::error::XPushError::ChannelError(
-                "Simulated failure".into(),
+            return Err(crate::core::error::XPushError::channel_disconnected(
+                "Simulated failure".to_string(),
+                file!(),
             ));
         }
 

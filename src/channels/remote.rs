@@ -143,8 +143,8 @@ impl Channel for RemoteChannel {
                     .clone()
                     .unwrap_or_else(|| message.recipient.to_string());
                 let url = format!("{}/{}", current_server, topic_str);
-                let payload =
-                    serde_json::to_vec(&message).map_err(XPushError::SerializationError)?;
+                let payload = serde_json::to_vec(&message)
+                    .map_err(Into::<XPushError>::into)?;
 
                 log::info!(
                     "[Remote] Attempting to publish message {} to ntfy topic {} on server {}",
@@ -193,10 +193,10 @@ impl Channel for RemoteChannel {
                                 continue;
                             }
 
-                            return Err(XPushError::ChannelError(format!(
-                                "ntfy request failed: {} - {}",
-                                status, error_text
-                            )));
+                            return Err(XPushError::channel_disconnected(
+                                format!("ntfy request failed: {} - {}", status, error_text),
+                                file!(),
+                            ));
                         }
                     }
                     Err(e) => {
@@ -213,11 +213,10 @@ impl Channel for RemoteChannel {
                             continue;
                         }
 
-                        return Err(XPushError::ChannelError(format!(
-                            "Failed to send to ntfy after {} attempts: {}",
-                            attempts + 1,
-                            e
-                        )));
+                        return Err(XPushError::channel_disconnected(
+                            format!("Failed to send to ntfy after {} attempts: {}", attempts + 1, e),
+                            file!(),
+                        ));
                     }
                 }
             }

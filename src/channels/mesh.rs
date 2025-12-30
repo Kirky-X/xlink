@@ -51,10 +51,10 @@ impl Channel for BluetoothMeshChannel {
         }
 
         // 如果不是直接邻居，Mesh 协议会自动尝试泛洪或路由，此处模拟失败
-        Err(XPushError::ChannelError(format!(
-            "Device {} not reachable in Bluetooth Mesh network",
-            message.recipient
-        )))
+        Err(XPushError::channel_init_failed(
+            format!("Device {} not reachable in Bluetooth Mesh network", message.recipient),
+            file!(),
+        ))
     }
 
     async fn check_state(&self, target: &DeviceId) -> Result<ChannelState> {
