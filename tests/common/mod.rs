@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 // use xpush::router::types::{RoutingStrategy, Target}; // These types don't exist in the codebase
 use std::collections::HashSet;
+use xpush::capability::manager::CapabilityManager;
 use xpush::core::error::Result;
 use xpush::core::traits::{Channel as ChannelTrait, MessageHandler};
 use xpush::core::types::{
@@ -99,6 +100,20 @@ pub fn test_device_with_network(_network_type: NetworkType) -> DeviceCapabilitie
         is_charging: false,
         data_cost_sensitive: true,
     }
+}
+
+/// Create a test CapabilityManager
+pub fn create_test_cap_manager() -> Arc<CapabilityManager> {
+    let caps = DeviceCapabilities {
+        device_id: test_device_id(),
+        device_type: DeviceType::Smartphone,
+        device_name: "Test Device".to_string(),
+        supported_channels: HashSet::new(),
+        battery_level: Some(100),
+        is_charging: true,
+        data_cost_sensitive: false,
+    };
+    Arc::new(CapabilityManager::new(caps))
 }
 
 // ==================== Real Implementations ====================

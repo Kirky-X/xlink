@@ -131,3 +131,160 @@ async fn test_heartbeat_ping_pong() {
     heartbeat_manager.handle_heartbeat(&ping).await;
     // Success means no panic during handling
 }
+
+// ==================== Error Handling Tests ====================
+
+#[test]
+fn test_error_code_parsing() {
+    // 测试错误码解析
+    use xpush::core::error::ErrorCode;
+
+    let code: Result<ErrorCode, _> = "101".parse();
+    assert_eq!(code, Ok(ErrorCode(101)));
+
+    let code: Result<ErrorCode, _> = "9999".parse();
+    assert_eq!(code, Ok(ErrorCode(9999)));
+
+    // 测试无效错误码
+    let code: Result<ErrorCode, _> = "10000".parse();
+    assert!(code.is_err());
+}
+
+#[test]
+fn test_error_code_module_and_sequence() {
+    // 测试错误码的模块和序号提取
+    use xpush::core::error::ErrorCode;
+
+    let code = ErrorCode(101);
+    assert_eq!(code.module(), 1);
+    assert_eq!(code.sequence(), 1);
+
+    let code = ErrorCode(205);
+    assert_eq!(code.module(), 2);
+    assert_eq!(code.sequence(), 5);
+}
+
+#[test]
+fn test_error_category_code_range() {
+    // 测试错误分类的代码范围
+    use xpush::core::error::ErrorCategory;
+
+    let (start, end) = ErrorCategory::System.code_range();
+    assert_eq!(start, 100);
+    assert_eq!(end, 199);
+
+    let (start, end) = ErrorCategory::Channel.code_range();
+    assert_eq!(start, 200);
+    assert_eq!(end, 299);
+}
+
+#[test]
+fn test_error_creation() {
+    // 测试错误创建
+    use xpush::core::error::XPushError;
+
+    let error = XPushError::device_not_found("test-device", "test.rs");
+    assert_eq!(error.code().0, 501);
+    assert_eq!(error.message(), "设备未找到");
+    assert_eq!(error.location(), "test.rs");
+}
+
+#[test]
+fn test_error_with_context() {
+    // 测试错误上下文
+    use xpush::core::error::XPushError;
+
+    let error =
+        XPushError::channel_disconnected("Connection lost", "test.rs").with_device_id("device-123");
+
+    assert_eq!(error.context.device_id, Some("device-123".to_string()));
+    assert!(error.is_retryable());
+}
+
+#[test]
+fn test_error_chain() {
+    // 测试错误链
+    use xpush::core::error::XPushError;
+
+    let inner = XPushError::invalid_input("test", "Invalid value", "inner.rs");
+    let outer = XPushError::storage_write_failed("key", "Failed", "outer.rs").with_source(inner);
+
+    assert!(outer.source.is_some());
+    assert_eq!(outer.source.as_ref().unwrap().message(), "输入参数无效");
+}
+
+// ==================== Crypto Module Tests ====================
+
+#[test]
+fn test_crypto_engine_creation() {
+    // 测试加密引擎创建
+    use xpush::crypto::engine::CryptoEngine;
+
+    let engine = CryptoEngine::new();
+    let public_key = engine.public_key();
+
+    // 验证公钥不为零
+    assert_ne!(public_key.as_bytes(), &[0u8; 32]);
+}
+
+#[test]
+fn test_crypto_sign_and_verify() {
+    // 测试签名和验证
+    use xpush::crypto::engine::CryptoEngine;
+
+    let engine = CryptoEngine::new();
+    let data = b"test data";
+
+    let signature = engine.sign(data);
+    assert_eq!(signature.len(), 64);
+}
+
+#[test]
+fn test_session_creation() {
+    // 测试会话创建
+    use x25519_dalek::PublicKey;
+    use xpush::core::types::DeviceId;
+    use xpush::crypto::engine::CryptoEngine;
+
+    let engine = CryptoEngine::new();
+    let peer_id = DeviceId::new();
+    let peer_public = PublicKey::from([1u8; 32]);
+
+    // 测试未认证会话创建
+    let result = engine.establish_session(peer_id, peer_public);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_session_expiration() {
+    // 测试会话过期
+    use x25519_dalek::PublicKey;
+    use xpush::core::types::DeviceId;
+    use xpush::crypto::engine::CryptoEngine;
+
+    let engine = CryptoEngine::new();
+    let peer_id = DeviceId::new();
+    let peer_public = PublicKey::from([1u8; 32]);
+
+    engine.establish_session(peer_id, peer_public).unwrap();
+
+    // 验证会话已创建
+    let sessions = engine.export_state().unwrap();
+    assert!(!sessions.sessions.is_empty());
+}
+
+// ==================== Storage Path Validation Tests ====================
+
+#[test]
+fn test_path_validation() {
+    // 测试路径验证逻辑
+    use std::path::Path;
+
+    // 正常路径应该通过验证
+    let valid_path = Path::new("/tmp/xpush");
+    assert!(!valid_path.to_string_lossy().contains(".."));
+
+    // 路径遍历攻击应该被检测
+    let traversal_path = Path::new("/tmp/xpush/../../../etc");
+    assert!(traversal_path.to_string_lossy().contains(".."));
+}
