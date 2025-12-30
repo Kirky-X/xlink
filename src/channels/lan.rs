@@ -20,9 +20,7 @@ pub struct LanChannel {
 
 impl LanChannel {
     pub async fn new(local_addr: SocketAddr, handler: Arc<dyn MessageHandler>) -> Result<Self> {
-        let socket = UdpSocket::bind(local_addr)
-            .await
-            .map_err(std::io::Error::from)?;
+        let socket = UdpSocket::bind(local_addr).await?;
 
         Ok(Self {
             local_addr,
@@ -52,13 +50,9 @@ impl Channel for LanChannel {
 
         match target_addr {
             Some(addr) => {
-                let data = serde_json::to_vec(&message)
-                    .map_err(serde_json::Error::from)?;
+                let data = serde_json::to_vec(&message)?;
 
-                self.socket
-                    .send_to(&data, addr)
-                    .await
-                    .map_err(std::io::Error::from)?;
+                self.socket.send_to(&data, addr).await?;
 
                 log::info!("[LanChannel] Sent message {} to {}", message.id, addr);
                 Ok(())

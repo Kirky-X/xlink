@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// ntfy 远程通道实现
-/// 支持主备服务器切换，利用 https://ntfy.sh 进行公网推送
+/// 支持主备服务器切换，利用 <https://ntfy.sh> 进行公网推送
 pub struct RemoteChannel {
     local_device_id: DeviceId,
     primary_server_url: String,
@@ -143,8 +143,7 @@ impl Channel for RemoteChannel {
                     .clone()
                     .unwrap_or_else(|| message.recipient.to_string());
                 let url = format!("{}/{}", current_server, topic_str);
-                let payload = serde_json::to_vec(&message)
-                    .map_err(Into::<XPushError>::into)?;
+                let payload = serde_json::to_vec(&message).map_err(Into::<XPushError>::into)?;
 
                 log::info!(
                     "[Remote] Attempting to publish message {} to ntfy topic {} on server {}",
@@ -214,7 +213,11 @@ impl Channel for RemoteChannel {
                         }
 
                         return Err(XPushError::channel_disconnected(
-                            format!("Failed to send to ntfy after {} attempts: {}", attempts + 1, e),
+                            format!(
+                                "Failed to send to ntfy after {} attempts: {}",
+                                attempts + 1,
+                                e
+                            ),
                             file!(),
                         ));
                     }

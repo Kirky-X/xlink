@@ -1,3 +1,4 @@
+pub mod base;
 pub mod bluetooth;
 pub mod dummy;
 pub mod lan;
