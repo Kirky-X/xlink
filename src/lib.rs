@@ -10,6 +10,7 @@ pub mod ffi;
 pub mod group;
 pub mod heartbeat;
 pub mod media;
+pub mod utils;
 
 use crate::capability::manager::CapabilityManager;
 use crate::core::error::Result;
@@ -143,32 +144,44 @@ struct SdkMessageHandler {
 impl MessageHandler for SdkMessageHandler {
     async fn handle_message(&self, mut message: Message) -> Result<()> {
         // DoS 防护：限制每秒最多 100 条消息
-        {
-            let now = Instant::now();
-            let mut rate_entry = self.rate_limiter.entry(message.sender).or_insert((now, 0));
-            let (last_reset, count) = rate_entry.value_mut();
+        // 使用 try_get_mut 优化锁竞争，避免长时间持有 shard 锁
+        let now = Instant::now();
+        let should_rate_limit = {
+            match self.rate_limiter.try_get_mut(&message.sender) {
+                dashmap::try_result::TryResult::Present(mut rate_entry) => {
+                    let (last_reset, count) = rate_entry.value_mut();
 
-            // 使用饱和计数器和时间窗口优化 DoS 防护，避免时钟回拨导致的问题
-            let duration = now.saturating_duration_since(*last_reset);
-            if duration > Duration::from_secs(1) {
-                *last_reset = now;
-                *count = 1;
-            } else {
-                *count = count.saturating_add(1);
-                if *count > 100 {
-                    log::warn!(
-                        "DoS Protection: Rate limit exceeded for device {}",
-                        message.sender
-                    );
-                    return Err(crate::core::error::XPushError::resource_exhausted(
-                        format!("Rate limit exceeded for device {}", message.sender),
-                        (*count).into(),
-                        100,
-                        file!(),
-                    ));
+                    // 使用饱和计数器和时间窗口优化 DoS 防护，避免时钟回拨导致的问题
+                    let duration = now.saturating_duration_since(*last_reset);
+                    if duration > Duration::from_secs(1) {
+                        *last_reset = now;
+                        *count = 1;
+                        false
+                    } else {
+                        *count = count.saturating_add(1);
+                        *count > 100
+                    }
+                }
+                dashmap::try_result::TryResult::Absent | dashmap::try_result::TryResult::Locked => {
+                    // 如果其他线程正在修改这个条目，暂时允许通过
+                    // 这是一种退让策略，避免活锁
+                    false
                 }
             }
-        } // 显式释放 DashMap 的 shard 锁，防止后续获取其他锁时产生死锁风险
+        };
+
+        if should_rate_limit {
+            log::warn!(
+                "DoS Protection: Rate limit exceeded for device {}",
+                message.sender
+            );
+            return Err(crate::core::error::XPushError::resource_exhausted(
+                format!("Rate limit exceeded for device {}", message.sender),
+                101,
+                100,
+                file!(),
+            ));
+        }
 
         log::info!("SDK received message: {}", message.id);
 
@@ -568,7 +581,7 @@ impl UnifiedPushSDK {
 
         let channel = match self.router.select_channel(&message).await {
             Ok(ch) => ch,
-            Err(e) if e.code().0 == 0105 => {
+            Err(e) if e.code().0 == 105 => {
                 // 如果没有找到路由，可能是因为还没有对方的 ChannelState 信息
                 // 在测试环境中，我们自动为目标设备添加默认的 ChannelState
                 log::warn!(
