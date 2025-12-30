@@ -51,3 +51,16 @@ Cargo.lock
 
 # Temporary files
 temp/
+
+# Coverage reports
+*.profraw
+*.profdata
+tarpaulin-report.html
+TEST_REPORT.md
+
+# Benchmark results
+criterion/
+
+# Backup files
+*.orig
+*.backup

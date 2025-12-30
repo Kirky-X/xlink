@@ -21,6 +21,7 @@ ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
 sha2 = "0.10"
 hmac = "0.12"
 hkdf = "0.12"
+zeroize = { version = "1.7", features = ["derive"] }
 dashmap = "5.5"
 log = "0.4"
 env_logger = "0.10"

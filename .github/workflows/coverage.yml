@@ -1,0 +1,146 @@
+name: Test Coverage
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          components: rust-src, llvm-tools-preview
+
+      - name: Install cargo-tarpaulin
+        run: |
+          cargo install cargo-tarpaulin \
+            --version 0.30.0 \
+            --locked
+
+      - name: Run tarpaulin coverage
+        run: |
+          cargo tarpaulin \
+            --all-features \
+            --test-threads 4 \
+            --out Xml \
+            --fail-under 50 \
+            --exclude-files "tests/*" \
+            --exclude-files "benches/*"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Generate HTML coverage report
+        if: always()
+        run: |
+          cargo tarpaulin \
+            --all-features \
+            --test-threads 4 \
+            --out Html \
+            --exclude-files "tests/*" \
+            --exclude-files "benches/*"
+
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-report
+          path: tarpaulin-report.html
+          retention-days: 7
+
+  coverage-full:
+    name: Full Coverage Report (All Tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          components: rust-src, llvm-tools-preview
+
+      - name: Install cargo-tarpaulin
+        run: |
+          cargo install cargo-tarpaulin \
+            --version 0.30.0 \
+            --locked
+
+      - name: Run full tarpaulin coverage
+        run: |
+          cargo tarpaulin \
+            --all-features \
+            --test-threads 2 \
+            --out Xml \
+            --fail-under 30
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+
+  clippy-check:
+    name: Clippy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          components: clippy
+
+      - name: Run clippy
+        run: |
+          cargo clippy --all-features -- -D warnings
+
+      - name: Check clippy warnings count
+        run: |
+          WARNINGS=$(cargo clippy --all-features 2>&1 | grep -c "warning:" || echo "0")
+          echo "CLIPPY_WARNINGS=$WARNINGS" >> $GITHUB_ENV
+
+          if [ "$WARNINGS" -gt "50" ]; then
+            echo "Warning: High clippy warning count ($WARNINGS)"
+            echo "Consider running 'cargo clippy --fix' to auto-fix some warnings"
+          fi
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [coverage, clippy-check]
+    if: always()
+    steps:
+      - name: Print test summary
+        run: |
+          echo "## Test Coverage and Quality Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Coverage job: ${{ needs.coverage.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Clippy check: ${{ needs.clippy-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "For detailed coverage report, see the artifacts." >> $GITHUB_STEP_SUMMARY
