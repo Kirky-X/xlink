@@ -438,10 +438,11 @@ impl StreamManager {
                     if let Some(chunk) = session.received_chunks.remove(&i) {
                         full_data.extend_from_slice(&chunk);
                     } else {
-                        return Err(XPushError::StreamError(format!(
-                            "Missing chunk {} for stream {}",
-                            i, stream_id
-                        )));
+                        return Err(XPushError::stream_init_failed(
+                            format!("chunk_assembly"),
+                            format!("Missing chunk {} for stream {}", i, stream_id),
+                            file!(),
+                        ));
                     }
                 }
 
@@ -967,7 +968,11 @@ impl StreamManager {
             );
             Ok(new_bitrate)
         } else {
-            Err(XPushError::StreamError("Stream not found".to_string()))
+            Err(XPushError::stream_disconnected(
+                format!("stream_id={}", stream_id),
+                format!("Stream not found: {}", stream_id),
+                file!(),
+            ))
         }
     }
 
