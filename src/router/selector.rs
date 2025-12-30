@@ -153,7 +153,11 @@ impl Router {
 
             Ok(channel)
         } else {
-            Err(XPushError::NoRouteFound)
+            Err(XPushError::no_route_found(
+                target.to_string(),
+                "No suitable channel found for routing".to_string(),
+                file!(),
+            ))
         }
     }
 

@@ -160,8 +160,11 @@ impl MessageHandler for SdkMessageHandler {
                         "DoS Protection: Rate limit exceeded for device {}",
                         message.sender
                     );
-                    return Err(crate::core::error::XPushError::CryptoError(
-                        "Rate limit exceeded".into(),
+                    return Err(crate::core::error::XPushError::resource_exhausted(
+                        format!("Rate limit exceeded for device {}", message.sender),
+                        (*count).into(),
+                        100,
+                        file!(),
                     ));
                 }
             }
@@ -417,10 +420,11 @@ impl UnifiedPushSDK {
     pub fn export_sdk_state(&self) -> Result<Vec<u8>> {
         let crypto_state = self.crypto.export_state()?;
         let serialized = serde_json::to_vec(&crypto_state).map_err(|e| {
-            crate::core::error::XPushError::CryptoError(format!(
-                "Failed to serialize SDK state: {}",
-                e
-            ))
+            crate::core::error::XPushError::serialization_failed(
+                "export_sdk_state",
+                &format!("Failed to serialize SDK state: {}", e),
+                file!(),
+            )
         })?;
         Ok(serialized)
     }
@@ -429,10 +433,11 @@ impl UnifiedPushSDK {
     pub fn import_sdk_state(&mut self, data: &[u8]) -> Result<()> {
         let crypto_state: crate::crypto::engine::CryptoState = serde_json::from_slice(data)
             .map_err(|e| {
-                crate::core::error::XPushError::CryptoError(format!(
-                    "Failed to deserialize SDK state: {}",
-                    e
-                ))
+                crate::core::error::XPushError::serialization_failed(
+                    "import_sdk_state",
+                    &format!("Failed to deserialize SDK state: {}", e),
+                    file!(),
+                )
             })?;
         self.crypto = Arc::new(crate::crypto::engine::CryptoEngine::import_state(
             crypto_state,
@@ -528,8 +533,11 @@ impl UnifiedPushSDK {
                         "DoS Protection: Send rate limit exceeded for device {}",
                         self.device_id
                     );
-                    return Err(crate::core::error::XPushError::CryptoError(
-                        "Rate limit exceeded".into(),
+                    return Err(crate::core::error::XPushError::resource_exhausted(
+                        format!("Send rate limit exceeded for device {}", self.device_id),
+                        (*count).into(),
+                        100,
+                        file!(),
                     ));
                 }
             }
@@ -560,7 +568,7 @@ impl UnifiedPushSDK {
 
         let channel = match self.router.select_channel(&message).await {
             Ok(ch) => ch,
-            Err(crate::core::error::XPushError::NoRouteFound) => {
+            Err(e) if e.code().0 == 0105 => {
                 // 如果没有找到路由，可能是因为还没有对方的 ChannelState 信息
                 // 在测试环境中，我们自动为目标设备添加默认的 ChannelState
                 log::warn!(
