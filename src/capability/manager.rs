@@ -81,30 +81,22 @@ impl CapabilityManager {
     /// 清理所有远程设备信息，防止内存泄漏
     pub fn clear_remote_devices(&self) {
         // Remove remote_states entries one by one to avoid fragmentation
-        let state_keys: Vec<_> = self
-            .remote_states
-            .iter()
-            .map(|entry| *entry.key())
-            .collect();
-        for device_id in state_keys {
-            self.remote_states.remove(&device_id);
-        }
+        crate::utils::remove_keys(
+            &self.remote_states,
+            crate::utils::get_all_keys(&self.remote_states),
+        );
 
         // Remove remote_caps entries one by one to avoid fragmentation
-        let cap_keys: Vec<_> = self.remote_caps.iter().map(|entry| *entry.key()).collect();
-        for device_id in cap_keys {
-            self.remote_caps.remove(&device_id);
-        }
+        crate::utils::remove_keys(
+            &self.remote_caps,
+            crate::utils::get_all_keys(&self.remote_caps),
+        );
 
         // Remove change_handlers entries one by one to avoid fragmentation
-        let handler_keys: Vec<_> = self
-            .change_handlers
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
-        for device_id in handler_keys {
-            self.change_handlers.remove(&device_id);
-        }
+        crate::utils::remove_keys(
+            &self.change_handlers,
+            crate::utils::get_all_keys(&self.change_handlers),
+        );
     }
 
     pub fn register_remote_device(&self, caps: DeviceCapabilities) {

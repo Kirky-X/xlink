@@ -439,7 +439,7 @@ impl StreamManager {
                         full_data.extend_from_slice(&chunk);
                     } else {
                         return Err(XPushError::stream_init_failed(
-                            format!("chunk_assembly"),
+                            "chunk_assembly".to_string(),
                             format!("Missing chunk {} for stream {}", i, stream_id),
                             file!(),
                         ));

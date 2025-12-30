@@ -48,7 +48,6 @@ pub extern "C" fn xpush_init() -> *mut xpush_sdk {
             data_cost_sensitive: false,
         };
 
-        // Initialize with a simple memory channel for demonstration
         let handler = Arc::new(NoopHandler);
         let memory_channel = Arc::new(crate::channels::memory::MemoryChannel::new(handler, 10));
         let channels: Vec<Arc<dyn crate::core::traits::Channel>> = vec![memory_channel];
@@ -68,16 +67,51 @@ pub extern "C" fn xpush_init() -> *mut xpush_sdk {
     }
 }
 
-/// 释放 SDK 实例
+/// 关闭 SDK
 ///
 /// # Safety
 ///
-/// 该函数必须由 C 调用，且 `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针。
+/// - `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针
+/// - 调用此函数后，`sdk` 指针将失效，不应再使用
+#[no_mangle]
+pub unsafe extern "C" fn xpush_shutdown(sdk: *mut xpush_sdk) -> i32 {
+    if sdk.is_null() {
+        return -1;
+    }
+
+    let sdk_ref = &*sdk;
+    let shutdown_result: Result<(), ()> = sdk_ref.rt.block_on(async {
+        sdk_ref.inner.stop().await;
+        Ok(())
+    });
+
+    match shutdown_result {
+        Ok(_) => 0,
+        Err(_) => -2,
+    }
+}
+
+/// 释放 SDK 资源
+///
+/// # Safety
+///
+/// - `sdk` 必须是一个有效的、由 `xpush_init` 返回的指针
+/// - 调用此函数后，`sdk` 指针将失效，不应再使用
+/// - 此函数会释放内存，因此不能对同一个指针调用两次
 #[no_mangle]
 pub unsafe extern "C" fn xpush_free(sdk: *mut xpush_sdk) {
-    if !sdk.is_null() {
-        let _ = Box::from_raw(sdk);
+    if sdk.is_null() {
+        return;
     }
+
+    let sdk_ref = &*sdk;
+
+    sdk_ref.rt.block_on(async {
+        sdk_ref.inner.stop().await;
+    });
+
+    let boxed = Box::from_raw(sdk);
+    drop(boxed);
 }
 
 /// 发送文本消息
@@ -94,24 +128,35 @@ pub unsafe extern "C" fn xpush_send_text(
     target_ptr: *const u8,
     text: *const c_char,
 ) -> i32 {
-    if sdk.is_null() || target_ptr.is_null() || text.is_null() {
+    if sdk.is_null() {
         return -1;
     }
 
+    if target_ptr.is_null() {
+        return -4;
+    }
+
+    if text.is_null() {
+        return -5;
+    }
+
     let sdk_ref = &*sdk;
-    let c_str = CStr::from_ptr(text);
-    let text_str = match c_str.to_str() {
-        Ok(s) => s.to_string(),
+    let c_str = match CStr::from_ptr(text).to_str() {
+        Ok(s) => s,
         Err(_) => return -2,
     };
 
-    let target_bytes = std::slice::from_raw_parts(target_ptr, 16);
-    let target_uuid = match Uuid::from_slice(target_bytes) {
-        Ok(u) => u,
-        Err(_) => return -4,
-    };
-    let target_id = DeviceId(target_uuid);
-    let payload = MessagePayload::Text(text_str);
+    let target_bytes: [u8; 16] = std::slice::from_raw_parts(target_ptr, 16)
+        .try_into()
+        .unwrap();
+
+    let target_uuid = Uuid::from_slice(&target_bytes);
+    if target_uuid.is_err() {
+        return -7;
+    }
+
+    let target_id = DeviceId(target_uuid.unwrap());
+    let payload = MessagePayload::Text(c_str.to_string());
 
     match sdk_ref.rt.block_on(sdk_ref.inner.send(target_id, payload)) {
         Ok(_) => 0,
@@ -132,24 +177,35 @@ pub unsafe extern "C" fn xpush_broadcast_text(
     group_id_ptr: *const u8,
     text: *const c_char,
 ) -> i32 {
-    if sdk.is_null() || group_id_ptr.is_null() || text.is_null() {
+    if sdk.is_null() {
         return -1;
     }
 
+    if group_id_ptr.is_null() {
+        return -4;
+    }
+
+    if text.is_null() {
+        return -5;
+    }
+
     let sdk_ref = &*sdk;
-    let c_str = CStr::from_ptr(text);
-    let text_str = match c_str.to_str() {
-        Ok(s) => s.to_string(),
+    let c_str = match CStr::from_ptr(text).to_str() {
+        Ok(s) => s,
         Err(_) => return -2,
     };
 
-    let group_bytes = std::slice::from_raw_parts(group_id_ptr, 16);
-    let group_uuid = match Uuid::from_slice(group_bytes) {
-        Ok(u) => u,
-        Err(_) => return -4,
-    };
-    let group_id = crate::core::types::GroupId(group_uuid);
-    let payload = MessagePayload::Text(text_str);
+    let group_bytes: [u8; 16] = std::slice::from_raw_parts(group_id_ptr, 16)
+        .try_into()
+        .unwrap();
+
+    let group_uuid = Uuid::from_slice(&group_bytes);
+    if group_uuid.is_err() {
+        return -7;
+    }
+
+    let group_id = crate::core::types::GroupId(group_uuid.unwrap());
+    let payload = MessagePayload::Text(c_str.to_string());
 
     match sdk_ref
         .rt

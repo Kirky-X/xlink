@@ -217,7 +217,10 @@ impl GroupManager {
 
         // 检查是否已存在
         if self.groups.contains_key(&group_id) {
-            return Err(XPushError::group_already_exists(group_id.to_string(), file!()));
+            return Err(XPushError::group_already_exists(
+                group_id.to_string(),
+                file!(),
+            ));
         }
 
         // 初始化 TreeKEM 群组成员密钥
@@ -322,7 +325,11 @@ impl GroupManager {
             Ok(encrypted) => encrypted,
             Err(e) => {
                 log::error!("Failed to encrypt group message: {}", e);
-                return Err(XPushError::encryption_failed("TreeKEM", &e.to_string(), file!()));
+                return Err(XPushError::encryption_failed(
+                    "TreeKEM",
+                    &e.to_string(),
+                    file!(),
+                ));
             }
         };
 
@@ -595,7 +602,11 @@ impl GroupManager {
             }
             Err(e) => {
                 log::error!("Failed to rotate group key for group {}: {}", group_id, e);
-                Err(XPushError::key_derivation_failed("TreeKEM key rotation", &e.to_string(), file!()))
+                Err(XPushError::key_derivation_failed(
+                    "TreeKEM key rotation",
+                    &e.to_string(),
+                    file!(),
+                ))
             }
         }
     }
@@ -652,7 +663,11 @@ impl GroupManager {
                     group_id,
                     e
                 );
-                Err(XPushError::key_derivation_failed("TreeKEM key update", &e.to_string(), file!()))
+                Err(XPushError::key_derivation_failed(
+                    "TreeKEM key update",
+                    &e.to_string(),
+                    file!(),
+                ))
             }
         }
     }
@@ -717,17 +732,25 @@ impl GroupManager {
 
     /// 清理过期的广播结果通道，防止内存泄漏
     pub async fn cleanup_expired_broadcast_results(&self) {
-        let mut results = self.broadcast_results.write().await;
-        // 移除所有已完成的广播结果通道（这里简化处理，移除所有）
-        results.clear();
-        log::debug!("Cleaned up {} broadcast result channels", results.len());
+        let results = self.broadcast_results.read().await;
+        let count = results.len();
+        drop(results);
+
+        if count > 0 {
+            let mut results = self.broadcast_results.write().await;
+            results.clear();
+            log::debug!("Cleaned up {} broadcast result channels", count);
+        }
     }
 
     /// 清理过期的邀请记录，防止内存泄漏
     pub fn cleanup_expired_invites(&self, max_age_hours: u64) {
         let current_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .map_err(|_| {
+                log::warn!("SystemTime before UNIX_EPOCH, using 0");
+            })
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
         let max_age_seconds = max_age_hours * 3600;
 
