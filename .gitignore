@@ -48,3 +48,6 @@ Cargo.lock
 
 # Local configuration
 .cargo/config.toml.local
+
+# Temporary files
+temp/
