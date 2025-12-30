@@ -8,12 +8,11 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct MemoryStorage {
-    // DeviceId -> List of Messages
     messages: Arc<DashMap<DeviceId, Vec<Message>>>,
-    // 待发送消息队列（用于崩溃恢复）
     pending_messages: Arc<DashMap<DeviceId, Vec<Message>>>,
-    // 审计日志
     audit_logs: Arc<DashMap<String, Vec<String>>>,
+    message_index: Arc<DashMap<Uuid, DeviceId>>,
+    pending_index: Arc<DashMap<Uuid, DeviceId>>,
 }
 
 impl MemoryStorage {
@@ -22,6 +21,8 @@ impl MemoryStorage {
             messages: Arc::new(DashMap::new()),
             pending_messages: Arc::new(DashMap::new()),
             audit_logs: Arc::new(DashMap::new()),
+            message_index: Arc::new(DashMap::new()),
+            pending_index: Arc::new(DashMap::new()),
         }
     }
 }
@@ -37,6 +38,7 @@ impl Storage for MemoryStorage {
     async fn save_message(&self, message: &Message) -> Result<()> {
         let mut entry = self.messages.entry(message.recipient).or_default();
         entry.push(message.clone());
+        self.message_index.insert(message.id, message.recipient);
         Ok(())
     }
 
@@ -48,9 +50,10 @@ impl Storage for MemoryStorage {
     }
 
     async fn remove_message(&self, message_id: &Uuid) -> Result<()> {
-        // Inefficient for large queues, but fine for MVP Memory Store
-        for mut entry in self.messages.iter_mut() {
-            entry.retain(|m| m.id != *message_id);
+        if let Some((_, device_id)) = self.message_index.remove(message_id) {
+            if let Some(mut entry) = self.messages.get_mut(&device_id) {
+                entry.retain(|m| m.id != *message_id);
+            }
         }
         Ok(())
     }
@@ -69,13 +72,13 @@ impl Storage for MemoryStorage {
     }
 
     async fn cleanup_old_data(&self, _days: u32) -> Result<u64> {
-        // 内存存储不清理旧数据
         Ok(0)
     }
 
     async fn save_pending_message(&self, message: &Message) -> Result<()> {
         let mut entry = self.pending_messages.entry(message.recipient).or_default();
         entry.push(message.clone());
+        self.pending_index.insert(message.id, message.recipient);
         Ok(())
     }
 
@@ -90,14 +93,15 @@ impl Storage for MemoryStorage {
     }
 
     async fn remove_pending_message(&self, message_id: &Uuid) -> Result<()> {
-        for mut entry in self.pending_messages.iter_mut() {
-            entry.retain(|m| m.id != *message_id);
+        if let Some((_, device_id)) = self.pending_index.remove(message_id) {
+            if let Some(mut entry) = self.pending_messages.get_mut(&device_id) {
+                entry.retain(|m| m.id != *message_id);
+            }
         }
         Ok(())
     }
 
     async fn get_storage_usage(&self) -> Result<u64> {
-        // 内存存储返回估算值
         let mut total_size = 0u64;
 
         for entry in self.messages.iter() {
@@ -127,10 +131,8 @@ impl Storage for MemoryStorage {
             return Ok(0);
         }
 
-        // 内存存储清理：完全清除DashMap条目以避免碎片化
         let mut removed_size = 0u64;
 
-        // 清理消息 - 完全移除条目而不是仅清空
         let message_keys: Vec<_> = self.messages.iter().map(|entry| *entry.key()).collect();
         for device_id in message_keys {
             if let Some((_, messages)) = self.messages.remove(&device_id) {
@@ -138,7 +140,6 @@ impl Storage for MemoryStorage {
             }
         }
 
-        // 清理待发送消息 - 完全移除条目
         let pending_keys: Vec<_> = self
             .pending_messages
             .iter()
@@ -150,7 +151,6 @@ impl Storage for MemoryStorage {
             }
         }
 
-        // 清理审计日志 - 完全移除条目
         let audit_keys: Vec<_> = self
             .audit_logs
             .iter()
@@ -158,7 +158,7 @@ impl Storage for MemoryStorage {
             .collect();
         for key in audit_keys {
             if let Some((_, logs)) = self.audit_logs.remove(&key) {
-                removed_size += logs.len() as u64 * 100; // 估算每条日志100字节
+                removed_size += logs.len() as u64 * 100;
             }
         }
 
@@ -191,6 +191,24 @@ impl Storage for MemoryStorage {
             .collect();
         for key in audit_keys {
             self.audit_logs.remove(&key);
+        }
+
+        let index_message_keys: Vec<_> = self
+            .message_index
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
+        for key in index_message_keys {
+            self.message_index.remove(&key);
+        }
+
+        let index_pending_keys: Vec<_> = self
+            .pending_index
+            .iter()
+            .map(|entry| *entry.key())
+            .collect();
+        for key in index_pending_keys {
+            self.pending_index.remove(&key);
         }
     }
 }

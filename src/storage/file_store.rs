@@ -19,6 +19,10 @@ pub struct FileStorage {
 impl FileStorage {
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let base_path = path.as_ref().to_path_buf();
+
+        // 验证路径安全性
+        Self::validate_path(&base_path)?;
+
         if !base_path.exists() {
             fs::create_dir_all(&base_path)
                 .await
@@ -35,32 +39,80 @@ impl FileStorage {
         Ok(storage)
     }
 
+    /// 验证路径安全性，防止路径遍历攻击
+    fn validate_path(path: &Path) -> Result<()> {
+        // 检查路径是否包含 ".." 或其他危险模式
+        let path_str = path.to_string_lossy();
+        if path_str.contains("..") {
+            return Err(XPushError::invalid_input(
+                "storage_path",
+                "Path traversal not allowed",
+                file!(),
+            ));
+        }
+
+        // 检查路径长度
+        if path_str.len() > 4096 {
+            return Err(XPushError::invalid_input(
+                "storage_path",
+                "Path too long",
+                file!(),
+            ));
+        }
+
+        // 如果路径存在，获取规范化路径进行进一步验证
+        if path.exists() {
+            let canonical = std::fs::canonicalize(path).map_err(|e| {
+                XPushError::storage_init_failed(
+                    "FileStorage",
+                    &format!("Invalid path: {}", e),
+                    file!(),
+                )
+            })?;
+
+            // 检查规范化路径是否包含 ".."
+            let canonical_str = canonical.to_string_lossy();
+            if canonical_str.contains("..") {
+                return Err(XPushError::invalid_input(
+                    "storage_path",
+                    "Path traversal not allowed",
+                    file!(),
+                ));
+            }
+
+            // 检查路径是否为绝对路径
+            if !canonical.is_absolute() {
+                return Err(XPushError::invalid_input(
+                    "storage_path",
+                    "Path must be absolute",
+                    file!(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 清理内存索引，使用entry removal避免内存碎片
+    fn clear_indexes_internal(&self) {
+        crate::utils::remove_keys(
+            &self.message_index,
+            crate::utils::get_all_keys(&self.message_index),
+        );
+        crate::utils::remove_keys(
+            &self.pending_index,
+            crate::utils::get_all_keys(&self.pending_index),
+        );
+    }
+
     /// 清理内存索引，防止内存泄漏
     pub fn clear_indexes(&self) {
-        self.message_index.clear();
-        self.pending_index.clear();
+        self.clear_indexes_internal();
     }
 
     /// 彻底清理内存索引，使用entry removal避免内存碎片
     pub fn cleanup_indexes(&self) {
-        // 使用entry removal而不是clear来避免DashMap内存碎片
-        let message_ids: Vec<Uuid> = self
-            .message_index
-            .iter()
-            .map(|entry| *entry.key())
-            .collect();
-        for message_id in message_ids {
-            self.message_index.remove(&message_id);
-        }
-
-        let pending_ids: Vec<Uuid> = self
-            .pending_index
-            .iter()
-            .map(|entry| *entry.key())
-            .collect();
-        for pending_id in pending_ids {
-            self.pending_index.remove(&pending_id);
-        }
+        self.clear_indexes_internal();
     }
 
     /// 启动时重建内存索引
@@ -69,7 +121,11 @@ impl FileStorage {
         let mut entries = fs::read_dir(&self.base_path)
             .await
             .map_err(Into::<XPushError>::into)?;
-        while let Some(device_entry) = entries.next_entry().await.map_err(Into::<XPushError>::into)? {
+        while let Some(device_entry) = entries
+            .next_entry()
+            .await
+            .map_err(Into::<XPushError>::into)?
+        {
             let path = device_entry.path();
             if path.is_dir() {
                 let file_name = device_entry.file_name();
@@ -77,9 +133,13 @@ impl FileStorage {
 
                 if dir_name == "pending" {
                     // 处理待发送消息目录
-                    let mut p_entries = fs::read_dir(&path).await.map_err(Into::<XPushError>::into)?;
-                    while let Some(p_device_entry) =
-                        p_entries.next_entry().await.map_err(Into::<XPushError>::into)?
+                    let mut p_entries = fs::read_dir(&path)
+                        .await
+                        .map_err(Into::<XPushError>::into)?;
+                    while let Some(p_device_entry) = p_entries
+                        .next_entry()
+                        .await
+                        .map_err(Into::<XPushError>::into)?
                     {
                         if p_device_entry.path().is_dir() {
                             let p_file_name = p_device_entry.file_name();
@@ -113,8 +173,9 @@ impl FileStorage {
                 } else if dir_name != "audit" {
                     // 处理普通消息目录
                     if let Ok(device_id) = dir_name.parse::<DeviceId>() {
-                        let mut msg_entries =
-                            fs::read_dir(&path).await.map_err(Into::<XPushError>::into)?;
+                        let mut msg_entries = fs::read_dir(&path)
+                            .await
+                            .map_err(Into::<XPushError>::into)?;
                         while let Some(msg_entry) = msg_entries
                             .next_entry()
                             .await
@@ -144,6 +205,25 @@ impl FileStorage {
         self.base_path.join(device_id.to_string())
     }
 
+    /// 安全地获取设备目录路径，包含验证
+    fn get_device_dir_safe(&self, device_id: &DeviceId) -> Result<PathBuf> {
+        let device_id_str = device_id.to_string();
+
+        // 验证设备 ID 不包含危险字符
+        if device_id_str.contains("..")
+            || device_id_str.contains('/')
+            || device_id_str.contains('\\')
+        {
+            return Err(XPushError::invalid_input(
+                "device_id",
+                "Invalid device ID",
+                file!(),
+            ));
+        }
+
+        Ok(self.base_path.join(device_id_str))
+    }
+
     fn get_message_path(&self, device_id: &DeviceId, message_id: &Uuid) -> PathBuf {
         self.get_device_dir(device_id)
             .join(format!("{}.json", message_id))
@@ -151,6 +231,25 @@ impl FileStorage {
 
     fn get_pending_device_dir(&self, device_id: &DeviceId) -> PathBuf {
         self.base_path.join("pending").join(device_id.to_string())
+    }
+
+    /// 安全地获取待发送设备目录路径，包含验证
+    fn get_pending_device_dir_safe(&self, device_id: &DeviceId) -> Result<PathBuf> {
+        let device_id_str = device_id.to_string();
+
+        // 验证设备 ID 不包含危险字符
+        if device_id_str.contains("..")
+            || device_id_str.contains('/')
+            || device_id_str.contains('\\')
+        {
+            return Err(XPushError::invalid_input(
+                "device_id",
+                "Invalid device ID",
+                file!(),
+            ));
+        }
+
+        Ok(self.base_path.join("pending").join(device_id_str))
     }
 
     fn get_pending_message_path(&self, device_id: &DeviceId, message_id: &Uuid) -> PathBuf {
@@ -162,7 +261,7 @@ impl FileStorage {
 #[async_trait]
 impl Storage for FileStorage {
     async fn save_message(&self, message: &Message) -> Result<()> {
-        let device_dir = self.get_device_dir(&message.recipient);
+        let device_dir = self.get_device_dir_safe(&message.recipient)?;
         if !device_dir.exists() {
             fs::create_dir_all(&device_dir)
                 .await
@@ -181,7 +280,7 @@ impl Storage for FileStorage {
     }
 
     async fn get_pending_messages(&self, device_id: &DeviceId) -> Result<Vec<Message>> {
-        let device_dir = self.get_device_dir(device_id);
+        let device_dir = self.get_device_dir_safe(device_id)?;
         if !device_dir.exists() {
             return Ok(Vec::new());
         }
@@ -191,7 +290,11 @@ impl Storage for FileStorage {
             .await
             .map_err(Into::<XPushError>::into)?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(Into::<XPushError>::into)? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(Into::<XPushError>::into)?
+        {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
                 let content = fs::read(path).await.map_err(Into::<XPushError>::into)?;
@@ -209,7 +312,9 @@ impl Storage for FileStorage {
         if let Some((_, device_id)) = self.message_index.remove(message_id) {
             let path = self.get_message_path(&device_id, message_id);
             if path.exists() {
-                fs::remove_file(path).await.map_err(Into::<XPushError>::into)?;
+                fs::remove_file(path)
+                    .await
+                    .map_err(Into::<XPushError>::into)?;
             }
         }
         Ok(())
@@ -224,10 +329,18 @@ impl Storage for FileStorage {
         }
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| {
+                XPushError::invalid_input(
+                    "timestamp",
+                    &format!("SystemTime before UNIX_EPOCH: {}", e),
+                    file!(),
+                )
+            })?
             .as_nanos();
         let path = audit_dir.join(format!("{}.log", timestamp));
-        fs::write(path, log).await.map_err(Into::<XPushError>::into)?;
+        fs::write(path, log)
+            .await
+            .map_err(Into::<XPushError>::into)?;
         Ok(())
     }
 
@@ -237,8 +350,14 @@ impl Storage for FileStorage {
             return Ok(Vec::new());
         }
         let mut logs = Vec::new();
-        let mut entries = fs::read_dir(audit_dir).await.map_err(Into::<XPushError>::into)?;
-        while let Some(entry) = entries.next_entry().await.map_err(Into::<XPushError>::into)? {
+        let mut entries = fs::read_dir(audit_dir)
+            .await
+            .map_err(Into::<XPushError>::into)?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(Into::<XPushError>::into)?
+        {
             if entry.path().is_file() {
                 let content = fs::read_to_string(entry.path())
                     .await
@@ -257,18 +376,24 @@ impl Storage for FileStorage {
         let now = std::time::SystemTime::now();
         let threshold = std::time::Duration::from_secs((days * 24 * 3600) as u64);
 
-        // 递归清理旧文件 (简单逻辑)
         let mut stack = vec![self.base_path.clone()];
         while let Some(dir) = stack.pop() {
             let mut entries = fs::read_dir(dir).await.map_err(Into::<XPushError>::into)?;
-            while let Some(entry) = entries.next_entry().await.map_err(Into::<XPushError>::into)? {
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(Into::<XPushError>::into)?
+            {
                 let metadata = entry.metadata().await.map_err(Into::<XPushError>::into)?;
-                let modified = metadata.modified().map_err(Into::<XPushError>::into)?;
-                if now
-                    .duration_since(modified)
-                    .unwrap_or(std::time::Duration::ZERO)
-                    > threshold
-                {
+                let modified = match metadata.modified() {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                let elapsed = match now.duration_since(modified) {
+                    Ok(d) => d,
+                    Err(_) => continue,
+                };
+                if elapsed > threshold {
                     if metadata.is_file() {
                         fs::remove_file(entry.path())
                             .await
@@ -284,7 +409,7 @@ impl Storage for FileStorage {
     }
 
     async fn save_pending_message(&self, message: &Message) -> Result<()> {
-        let device_dir = self.get_pending_device_dir(&message.sender);
+        let device_dir = self.get_pending_device_dir_safe(&message.sender)?;
         if !device_dir.exists() {
             fs::create_dir_all(&device_dir)
                 .await
@@ -306,7 +431,7 @@ impl Storage for FileStorage {
         &self,
         device_id: &DeviceId,
     ) -> Result<Vec<Message>> {
-        let pending_dir = self.get_pending_device_dir(device_id);
+        let pending_dir = self.get_pending_device_dir_safe(device_id)?;
         if !pending_dir.exists() {
             return Ok(Vec::new());
         }
@@ -316,7 +441,11 @@ impl Storage for FileStorage {
             .await
             .map_err(Into::<XPushError>::into)?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(Into::<XPushError>::into)? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(Into::<XPushError>::into)?
+        {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
                 let content = fs::read(path).await.map_err(Into::<XPushError>::into)?;
@@ -334,7 +463,9 @@ impl Storage for FileStorage {
         if let Some((_, device_id)) = self.pending_index.remove(message_id) {
             let path = self.get_pending_message_path(&device_id, message_id);
             if path.exists() {
-                fs::remove_file(path).await.map_err(Into::<XPushError>::into)?;
+                fs::remove_file(path)
+                    .await
+                    .map_err(Into::<XPushError>::into)?;
             }
         }
         Ok(())
@@ -346,7 +477,11 @@ impl Storage for FileStorage {
 
         while let Some(dir) = stack.pop() {
             let mut entries = fs::read_dir(dir).await.map_err(Into::<XPushError>::into)?;
-            while let Some(entry) = entries.next_entry().await.map_err(Into::<XPushError>::into)? {
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(Into::<XPushError>::into)?
+            {
                 let metadata = entry.metadata().await.map_err(Into::<XPushError>::into)?;
                 if metadata.is_file() {
                     total_size += metadata.len();
@@ -372,7 +507,11 @@ impl Storage for FileStorage {
         let mut stack = vec![self.base_path.clone()];
         while let Some(dir) = stack.pop() {
             let mut entries = fs::read_dir(dir).await.map_err(Into::<XPushError>::into)?;
-            while let Some(entry) = entries.next_entry().await.map_err(Into::<XPushError>::into)? {
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(Into::<XPushError>::into)?
+            {
                 let metadata = entry.metadata().await.map_err(Into::<XPushError>::into)?;
                 if metadata.is_file() {
                     let modified = metadata.modified().map_err(Into::<XPushError>::into)?;
@@ -392,7 +531,9 @@ impl Storage for FileStorage {
                 break;
             }
 
-            fs::remove_file(&path).await.map_err(Into::<XPushError>::into)?;
+            fs::remove_file(&path)
+                .await
+                .map_err(Into::<XPushError>::into)?;
             removed_size += size;
         }
 
@@ -404,22 +545,6 @@ impl Storage for FileStorage {
     }
 
     fn clear_indexes(&self) {
-        let message_keys: Vec<_> = self
-            .message_index
-            .iter()
-            .map(|entry| *entry.key())
-            .collect();
-        for message_id in message_keys {
-            self.message_index.remove(&message_id);
-        }
-
-        let pending_keys: Vec<_> = self
-            .pending_index
-            .iter()
-            .map(|entry| *entry.key())
-            .collect();
-        for message_id in pending_keys {
-            self.pending_index.remove(&message_id);
-        }
+        self.clear_indexes_internal();
     }
 }

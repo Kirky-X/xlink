@@ -66,7 +66,9 @@ impl DistributedStore for FileDistributedStore {
                 file!(),
             ));
         }
-        let data = tokio::fs::read(path).await.map_err(Into::<XPushError>::into)?;
+        let data = tokio::fs::read(path)
+            .await
+            .map_err(Into::<XPushError>::into)?;
         log::info!(
             "[DistStore] Downloaded {} bytes from CID: {}",
             data.len(),
@@ -102,8 +104,7 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
         message: &crate::core::types::Message,
     ) -> crate::core::error::Result<()> {
         // 将消息序列化并上传到分布式存储
-        let data = serde_json::to_vec(message)
-            .map_err(Into::<XPushError>::into)?;
+        let data = serde_json::to_vec(message).map_err(Into::<XPushError>::into)?;
         let hash = self.distributed_store.upload(&data).await?;
 
         // 在本地缓存中保存哈希引用
@@ -132,8 +133,8 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
         for hash_msg in hash_messages {
             if let crate::core::types::MessagePayload::Text(hash) = &hash_msg.payload {
                 let data = self.distributed_store.download(hash).await?;
-                let message: crate::core::types::Message = serde_json::from_slice(&data)
-                    .map_err(Into::<XPushError>::into)?;
+                let message: crate::core::types::Message =
+                    serde_json::from_slice(&data).map_err(Into::<XPushError>::into)?;
                 messages.push(message);
             }
         }
