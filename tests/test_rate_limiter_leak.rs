@@ -44,7 +44,7 @@ fn test_rate_limiter_dashmap_leak() {
     );
     println!(
         "Memory increase: {} KB",
-        after_insert_memory - initial_memory
+        after_insert_memory.saturating_sub(initial_memory)
     );
 
     // Now clear it like the SDK's Drop impl does
