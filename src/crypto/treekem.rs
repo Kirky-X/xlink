@@ -87,7 +87,13 @@ impl TreeKemEngine {
         self.device_public_keys
             .get(&device_id)
             .map(|k| k.clone())
-            .ok_or_else(|| XPushError::key_derivation_failed("X25519", &format!("Device key not found: {}", device_id), file!()))
+            .ok_or_else(|| {
+                XPushError::key_derivation_failed(
+                    "X25519",
+                    &format!("Device key not found: {}", device_id),
+                    file!(),
+                )
+            })
     }
 
     pub fn clear_keys(&self) {
@@ -148,19 +154,19 @@ impl TreeKemEngine {
             .get(&group_id)
             .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
-        let plaintext = serde_json::to_vec(payload)
-            .map_err(Into::<XPushError>::into)?;
+        let plaintext = serde_json::to_vec(payload).map_err(Into::<XPushError>::into)?;
 
         let mut nonce_bytes = [0u8; 24];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = chacha20poly1305::XNonce::from(nonce_bytes);
 
-        let cipher = XChaCha20Poly1305::new_from_slice(&group.group_secret)
-            .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 init", &e.to_string(), file!()))?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&group.group_secret).map_err(|e| {
+            XPushError::encryption_failed("XChaCha20Poly1305 init", &e.to_string(), file!())
+        })?;
 
-        let ciphertext = cipher
-            .encrypt(&nonce, &*plaintext)
-            .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 encrypt", &e.to_string(), file!()))?;
+        let ciphertext = cipher.encrypt(&nonce, &*plaintext).map_err(|e| {
+            XPushError::encryption_failed("XChaCha20Poly1305 encrypt", &e.to_string(), file!())
+        })?;
 
         let mut result = nonce_bytes.to_vec();
         result.extend_from_slice(&ciphertext);
@@ -181,20 +187,31 @@ impl TreeKemEngine {
                     ));
                 }
 
-                let group = self.groups.get(&group_id).ok_or_else(|| {
-                    XPushError::group_not_found(group_id.to_string(), file!())
-                })?;
+                let group = self
+                    .groups
+                    .get(&group_id)
+                    .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
 
                 let mut nonce_bytes = [0u8; 24];
                 nonce_bytes.copy_from_slice(&ciphertext[0..24]);
                 let nonce = chacha20poly1305::XNonce::from(nonce_bytes);
 
-                let cipher = XChaCha20Poly1305::new_from_slice(&group.group_secret)
-                    .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 init", &e.to_string(), file!()))?;
+                let cipher =
+                    XChaCha20Poly1305::new_from_slice(&group.group_secret).map_err(|e| {
+                        XPushError::encryption_failed(
+                            "XChaCha20Poly1305 init",
+                            &e.to_string(),
+                            file!(),
+                        )
+                    })?;
 
-                let decrypted = cipher
-                    .decrypt(&nonce, &ciphertext[24..])
-                    .map_err(|e| XPushError::encryption_failed("XChaCha20Poly1305 decrypt", &e.to_string(), file!()))?;
+                let decrypted = cipher.decrypt(&nonce, &ciphertext[24..]).map_err(|e| {
+                    XPushError::encryption_failed(
+                        "XChaCha20Poly1305 decrypt",
+                        &e.to_string(),
+                        file!(),
+                    )
+                })?;
 
                 let payload: MessagePayload =
                     serde_json::from_slice(&decrypted).map_err(Into::<XPushError>::into)?;
@@ -370,9 +387,12 @@ impl TreeKemEngine {
     }
 
     pub fn sign_message(&self, data: &[u8]) -> Result<Signature, XPushError> {
-        self.signing_key
-            .try_sign(data)
-            .map_err(|e| XPushError::crypto_init_failed(&format!("Ed25519 signature creation failed: {}", e), file!()))
+        self.signing_key.try_sign(data).map_err(|e| {
+            XPushError::crypto_init_failed(
+                format!("Ed25519 signature creation failed: {}", e),
+                file!(),
+            )
+        })
     }
 
     pub fn verify_signature(
@@ -381,14 +401,17 @@ impl TreeKemEngine {
         signature: &Signature,
         public_key: &[u8],
     ) -> Result<bool, XPushError> {
-        let pk: [u8; 32] = public_key
-            .try_into()
-            .map_err(|_| XPushError::crypto_init_failed("Invalid Ed25519 public key length", file!()))?;
-        let verifying_key =
-            VerifyingKey::from_bytes(&pk).map_err(|e| XPushError::crypto_init_failed(&format!("Invalid Ed25519 public key: {}", e), file!()))?;
+        let pk: [u8; 32] = public_key.try_into().map_err(|_| {
+            XPushError::crypto_init_failed("Invalid Ed25519 public key length", file!())
+        })?;
+        let verifying_key = VerifyingKey::from_bytes(&pk).map_err(|e| {
+            XPushError::crypto_init_failed(format!("Invalid Ed25519 public key: {}", e), file!())
+        })?;
         verifying_key
             .verify(data, signature)
             .map(|_| true)
-            .map_err(|e| XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!()))
+            .map_err(|e| {
+                XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!())
+            })
     }
 }
