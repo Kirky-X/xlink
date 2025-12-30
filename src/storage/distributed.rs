@@ -28,7 +28,7 @@ impl FileDistributedStore {
         if !base_path.exists() {
             tokio::fs::create_dir_all(&base_path)
                 .await
-                .map_err(XPushError::IoError)?;
+                .map_err(Into::<XPushError>::into)?;
         }
         Ok(Self { base_path })
     }
@@ -53,7 +53,7 @@ impl DistributedStore for FileDistributedStore {
         let path = self.get_path(&hash);
         tokio::fs::write(path, data)
             .await
-            .map_err(XPushError::IoError)?;
+            .map_err(Into::<XPushError>::into)?;
         log::info!("[DistStore] Uploaded {} bytes, CID: {}", data.len(), hash);
         Ok(hash)
     }
@@ -61,12 +61,12 @@ impl DistributedStore for FileDistributedStore {
     async fn download(&self, hash: &str) -> Result<Vec<u8>> {
         let path = self.get_path(hash);
         if !path.exists() {
-            return Err(XPushError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
+            return Err(XPushError::device_not_found(
                 format!("Content not found for hash: {}", hash),
-            )));
+                file!(),
+            ));
         }
-        let data = tokio::fs::read(path).await.map_err(XPushError::IoError)?;
+        let data = tokio::fs::read(path).await.map_err(Into::<XPushError>::into)?;
         log::info!(
             "[DistStore] Downloaded {} bytes from CID: {}",
             data.len(),
@@ -103,7 +103,7 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
     ) -> crate::core::error::Result<()> {
         // 将消息序列化并上传到分布式存储
         let data = serde_json::to_vec(message)
-            .map_err(crate::core::error::XPushError::SerializationError)?;
+            .map_err(Into::<XPushError>::into)?;
         let hash = self.distributed_store.upload(&data).await?;
 
         // 在本地缓存中保存哈希引用
@@ -133,7 +133,7 @@ impl crate::core::traits::Storage for DistributedStorageAdapter {
             if let crate::core::types::MessagePayload::Text(hash) = &hash_msg.payload {
                 let data = self.distributed_store.download(hash).await?;
                 let message: crate::core::types::Message = serde_json::from_slice(&data)
-                    .map_err(crate::core::error::XPushError::SerializationError)?;
+                    .map_err(Into::<XPushError>::into)?;
                 messages.push(message);
             }
         }
