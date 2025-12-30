@@ -342,8 +342,9 @@ impl NetworkSimulator {
 
         // Simulate packet loss
         if rand::random::<f64>() < self.packet_loss_rate {
-            return Err(xpush::core::error::XPushError::ChannelError(
+            return Err(xpush::core::error::XPushError::channel_disconnected(
                 "Simulated packet loss".to_string(),
+                file!(),
             ));
         }
 
@@ -363,8 +364,9 @@ impl NetworkSimulator {
         failure_rate: f64,
     ) -> Result<()> {
         if failure_rate > 0.0 && rand::random::<f64>() < failure_rate {
-            return Err(xpush::core::error::XPushError::ChannelError(
+            return Err(xpush::core::error::XPushError::channel_disconnected(
                 "Simulated network failure".to_string(),
+                file!(),
             ));
         }
         tokio::time::sleep(delay).await;
