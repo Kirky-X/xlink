@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 XPush
+# 🚀 xlink
 
 <p>
   <!-- 版本 -->
@@ -144,11 +144,12 @@ graph LR
 Perfect for office, home, or industrial environments where devices communicate over local networks without internet dependency.
 
 ```rust
+use std::sync::Arc;
 use xlink::channels::lan::LanChannel;
-use xlink::UnifiedPushSDK;
+use xlink::xLink;
 
-let lan_channel = Arc::new(LanChannel::new());
-let sdk = UnifiedPushSDK::new(capabilities, vec![lan_channel]).await?;
+let lan_channel: Arc<dyn xlink::core::traits::Channel> = Arc::new(LanChannel::new());
+let sdk = xLink::new(capabilities, vec![lan_channel]).await?;
 sdk.start().await?;
 ```
 
@@ -162,10 +163,11 @@ sdk.start().await?;
 Ideal for ad-hoc networks, IoT deployments, and scenarios where devices form peer-to-peer mesh networks.
 
 ```rust
+use std::sync::Arc;
 use xlink::channels::mesh::MeshChannel;
 
-let mesh_channel = Arc::new(MeshChannel::new());
-let sdk = UnifiedPushSDK::new(capabilities, vec![mesh_channel]).await?;
+let mesh_channel: Arc<dyn xlink::core::traits::Channel> = Arc::new(MeshChannel::new());
+let sdk = xLink::new(capabilities, vec![mesh_channel]).await?;
 ```
 
 </details>
@@ -276,11 +278,11 @@ let capabilities = DeviceCapabilities {
 **Step 2: Create SDK Instance**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::xLink;
 use xlink::channels::memory::MemoryChannel;
 
 let channel = Arc::new(MemoryChannel::new(handler, 50));
-let sdk = UnifiedPushSDK::new(capabilities, vec![channel]).await?;
+let sdk = xLink::new(capabilities, vec![channel]).await?;
 sdk.start().await?;
 ```
 
@@ -300,7 +302,7 @@ use xlink::channels::memory::MemoryChannel;
 use xlink::core::types::{
     ChannelType, DeviceCapabilities, DeviceId, DeviceType, MessagePayload,
 };
-use xlink::UnifiedPushSDK;
+use xlink::xLink;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -316,7 +318,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let channel = Arc::new(MemoryChannel::new(handler, 50));
-    let sdk = UnifiedPushSDK::new(alice_caps, vec![channel]).await?;
+    let sdk = xLink::new(alice_caps, vec![channel]).await?;
     sdk.start().await?;
 
     // Send a message
@@ -401,9 +403,9 @@ Basic point-to-point messaging between two devices.
 ```rust
 use xlink::channels::memory::MemoryChannel;
 use xlink::core::types::{ChannelType, DeviceCapabilities, MessagePayload};
-use xlink::UnifiedPushSDK;
+use xlink::xLink;
 
-let sdk = UnifiedPushSDK::new(capabilities, vec![channel]).await?;
+let sdk = xLink::new(capabilities, vec![channel]).await?;
 sdk.start().await?;
 sdk.send(recipient, MessagePayload::Text("Hello".to_string())).await?;
 ```
@@ -445,7 +447,7 @@ use xlink::channels::bluetooth::BluetoothChannel;
 
 let wifi = Arc::new(WifiChannel::new());
 let bluetooth = Arc::new(BluetoothChannel::new());
-let sdk = UnifiedPushSDK::new(capabilities, vec![wifi, bluetooth]).await?;
+let sdk = xLink::new(capabilities, vec![wifi, bluetooth]).await?;
 ```
 
 </td>
@@ -608,7 +610,7 @@ let capabilities = DeviceCapabilities {
     supported_channels: HashSet::from([
         ChannelType::Lan,
         ChannelType::BluetoothLE,
-        ChannelType::WifiDirect,
+        ChannelType::WiFiDirect,
     ]),
     battery_level: Some(100),
     is_charging: true,
@@ -621,7 +623,7 @@ let capabilities = DeviceCapabilities {
 | Channel Type | Description | Use Case |
 |--------------|-------------|----------|
 | `Lan` | Local Area Network communication | Office, home networks |
-| `WifiDirect` | WiFi direct communication | Wireless direct connection |
+| `WiFiDirect` | WiFi direct communication | Wireless direct connection |
 | `BluetoothLE` | Bluetooth Low Energy | Short-range, low power |
 | `BluetoothMesh` | Bluetooth Mesh networking | Multi-hop mesh, IoT |
 | `Internet` | Cloud/Internet communication | Remote messaging |
@@ -831,7 +833,7 @@ Please report security vulnerabilities to: security@example.com
 
 ```mermaid
 gantt
-    title XPush Roadmap
+    title xlink Roadmap
     dateFormat  YYYY-MM
     section Core Features
     Multi-Channel Support    :done, 2024-01, 2024-06
@@ -1074,12 +1076,12 @@ View source code
 
 If you find this project useful, please consider giving it a ⭐️!
 
-**Built with ❤️ by the SDK Team**
+**Built with ❤️ by Kirky.X <Kirky-X@outlook.com>**
 
 [⬆ Back to Top](#-xlink)
 
 ---
 
-<sub>© 2024 XPush. All rights reserved.</sub>
+<sub>© 2024 xlink. All rights reserved.</sub>
 
 </div>
