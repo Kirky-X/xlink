@@ -2,7 +2,7 @@
 name = "xlink"
 version = "0.1.0"
 edition = "2021"
-authors = ["SDK Team"]
+authors = ["Kirky.X <Kirky-X@outlook.com>"]
 description = "Unified Multi-Channel Communication SDK"
 license = "MIT"
 
