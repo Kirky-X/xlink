@@ -72,9 +72,9 @@ Comprehensive documentation
 
 ---
 
-#### `UnifiedPushSDK::new()`
+#### `XLink::new()`
 
-Create a new XPush SDK instance with device capabilities and channels.
+Create a new xlink SDK instance with device capabilities and channels.
 
 <table>
 <tr>
@@ -101,7 +101,7 @@ pub async fn new(
 </tr>
 <tr>
 <td><b>Returns</b></td>
-<td><code>Result&lt;UnifiedPushSDK, Error&gt;</code> - SDK instance on success, Error on failure</td>
+<td><code>Result&lt;XLink, Error&gt;</code> - SDK instance on success, Error on failure</td>
 </tr>
 <tr>
 <td><b>Errors</b></td>
@@ -117,7 +117,7 @@ pub async fn new(
 **Example:**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 
@@ -134,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     println!("✅ SDK created successfully");
 
     Ok(())
@@ -186,7 +186,7 @@ let capabilities = DeviceCapabilities {
     data_cost_sensitive: false,
 };
 
-let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+let sdk = XLink::new(capabilities, vec![]).await?;
 sdk.start().await?;
 println!("✅ SDK is now listening for messages");
 ```
@@ -247,7 +247,12 @@ Device configuration structure for SDK initialization.
 ```rust
 pub struct DeviceCapabilities {
     pub device_id: DeviceId,
-    pub channels: Vec<ChannelType>,
+    pub device_type: DeviceType,
+    pub device_name: String,
+    pub supported_channels: HashSet<ChannelType>,
+    pub battery_level: Option<u8>,
+    pub is_charging: bool,
+    pub data_cost_sensitive: bool,
 }
 ```
 
@@ -258,7 +263,12 @@ pub struct DeviceCapabilities {
 <td>
 
 - `device_id: DeviceId` - Unique identifier for this device
-- `channels: Vec<ChannelType>` - List of supported channel types
+- `device_type: DeviceType` - Type of device (Smartphone, Laptop, etc.)
+- `device_name: String` - Human-readable device name
+- `supported_channels: HashSet<ChannelType>` - Set of supported channel types
+- `battery_level: Option<u8>` - Current battery percentage (0-100)
+- `is_charging: bool` - Whether the device is currently charging
+- `data_cost_sensitive: bool` - Whether to optimize for data usage
 
 </td>
 </tr>
@@ -336,7 +346,7 @@ let device_id: DeviceId = "550e8400-e29b-41d4-a716-446655440000".parse()?;
 
 </div>
 
-XPush 使用 `CryptoEngine` 提供端到端加密功能，基于 X25519 密钥交换和 ChaCha20Poly1305 加密算法。
+xlink 使用 `CryptoEngine` 提供端到端加密功能，基于 X25519 密钥交换和 ChaCha20Poly1305 加密算法。
 
 ---
 
@@ -647,7 +657,7 @@ crypto.establish_session(&peer_device_id, peer_public_key, None).await?;
 
 </div>
 
-XPush 的密钥管理集成在 `CryptoEngine` 中，自动处理密钥的生命周期。
+xlink 的密钥管理集成在 `CryptoEngine` 中，自动处理密钥的生命周期。
 
 ---
 
@@ -681,7 +691,7 @@ XPush 的密钥管理集成在 `CryptoEngine` 中，自动处理密钥的生命�
 **Example: 完整的端到端加密流程**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::{DeviceCapabilities, DeviceId};
 
 #[tokio::main]
@@ -697,7 +707,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
 
     // 1. 启动 SDK
     sdk.start().await?;
@@ -738,7 +748,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 </div>
 
-XPush 使用现代密码学算法确保通信安全。
+xlink 使用现代密码学算法确保通信安全。
 
 ### 密钥交换算法
 
@@ -822,24 +832,24 @@ XPush 使用现代密码学算法确保通信安全。
 
 </div>
 
-### `XPushError` Enum
+### `xlinkError` Enum
 
-XPush uses descriptive factory methods for error creation:
+xlink uses descriptive factory methods for error creation:
 
 ```rust
-use xlink::core::error::XPushError;
+use xlink::core::error::xlinkError;
 
 // Factory methods for common errors:
-XPushError::channel_disconnected(channel_type, reason, location)
-XPushError::encryption_failed(algorithm, reason, location)
-XPushError::group_not_found(group_id, location)
-XPushError::key_derivation_failed(algorithm, reason, location)
-XPushError::resource_exhausted(resource, current, limit, location)
-XPushError::serialization_failed(operation, reason, location)
-XPushError::stream_init_failed(operation, reason, location)
-XPushError::stream_disconnected(stream_id, reason, location)
-XPushError::device_not_found(device_id, location)
-XPushError::invalid_input(field, reason, location)
+xlinkError::channel_disconnected(channel_type, reason, location)
+xlinkError::encryption_failed(algorithm, reason, location)
+xlinkError::group_not_found(group_id, location)
+xlinkError::key_derivation_failed(algorithm, reason, location)
+xlinkError::resource_exhausted(resource, current, limit, location)
+xlinkError::serialization_failed(operation, reason, location)
+xlinkError::stream_init_failed(operation, reason, location)
+xlinkError::stream_disconnected(stream_id, reason, location)
+xlinkError::device_not_found(device_id, location)
+xlinkError::invalid_input(field, reason, location)
 ```
 
 ### Error Code Format
@@ -960,7 +970,7 @@ pub enum LogLevel {
 ### Example 1: Basic Usage
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::{DeviceCapabilities, DeviceId, MessagePayload, ChannelType};
 use std::collections::HashSet;
 
@@ -977,7 +987,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
     let payload = MessagePayload::Text("Hello, World!".to_string());
@@ -992,7 +1002,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Example 2: Group Messaging
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::{DeviceCapabilities, DeviceId, MessagePayload, ChannelType};
 use std::collections::HashSet;
 
@@ -1009,7 +1019,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
     // Create a group with multiple members
@@ -1031,7 +1041,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Example 3: E2E Encrypted Communication
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::{DeviceCapabilities, DeviceId, ChannelType};
 use std::collections::HashSet;
 
@@ -1048,7 +1058,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
     // Register peer's public key for encrypted group communication

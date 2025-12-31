@@ -12,7 +12,7 @@
 
 ## 🎯 Welcome Contributors!
 
-Thank you for your interest in contributing to **XPush**! We're excited to have you here. Whether you're fixing a bug, adding a feature, improving documentation, or helping others, your contributions are valuable and appreciated.
+Thank you for your interest in contributing to **xlink**! We're excited to have you here. Whether you're fixing a bug, adding a feature, improving documentation, or helping others, your contributions are valuable and appreciated.
 
 <div align="center">
 
@@ -312,7 +312,7 @@ cargo tarpaulin --out Html
 ```bash
 # Format: <type>(<scope>): <description>
 
-git commit -m "feat(encryption): add AES-256 support"
+git commit -m "feat(encryption): add ChaCha20Poly1305 support"
 git commit -m "fix(key-manager): resolve memory leak"
 git commit -m "docs(readme): update installation instructions"
 git commit -m "test(cipher): add edge case tests"
@@ -424,19 +424,38 @@ let result = operation().unwrap();
 
 ```
 src/
-├── lib.rs           # Public API
-├── core/            # Core functionality
+├── lib.rs              # Public API and SDK entry point
+├── core/               # Core functionality and types
 │   ├── mod.rs
-│   ├── engine.rs
-│   └── manager.rs
-├── algorithms/      # Algorithm implementations
+│   ├── types.rs        # Type definitions (DeviceId, MessagePayload, etc.)
+│   ├── error.rs        # Error types
+│   ├── traits.rs       # Channel and MessageHandler traits
+│   └── metrics.rs      # Metrics collection
+├── channels/           # Channel implementations
 │   ├── mod.rs
-│   ├── aes.rs
-│   └── ecdsa.rs
-├── error.rs         # Error types
-└── utils/           # Utilities
-    ├── mod.rs
-    └── helpers.rs
+│   ├── lan.rs          # LAN channel
+│   ├── wifi.rs         # WiFi direct channel
+│   ├── bluetooth.rs    # Bluetooth channel
+│   ├── mesh.rs         # Mesh network channel
+│   ├── memory.rs       # In-memory channel (testing)
+│   ├── remote.rs       # Remote/Internet channel
+│   └── dummy.rs        # Dummy implementations
+├── crypto/             # Cryptographic operations
+│   ├── mod.rs
+│   └── engine.rs       # CryptoEngine (X25519, ChaCha20Poly1305, Ed25519)
+├── router/             # Channel routing logic
+│   ├── mod.rs
+│   └── selector.rs     # Router implementation
+├── storage/            # Data persistence
+│   ├── mod.rs
+│   ├── file_storage.rs
+│   └── memory_storage.rs
+├── discovery/          # Device discovery (mDNS, BLE)
+├── group/              # Group messaging management
+├── heartbeat/          # Heartbeat mechanism
+├── media/              # Stream and media handling
+├── ffi/                # Foreign Function Interface
+└── utils/              # Utility functions
 ```
 
 ### Documentation
@@ -567,7 +586,7 @@ mod tests {
 
 ```rust
 // tests/integration_test.rs
-use xlink::{UnifiedPushSDK, Error};
+use xlink::{XLink, Error};
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -586,7 +605,7 @@ async fn test_full_workflow() -> Result<(), Error> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
     // Test basic operations

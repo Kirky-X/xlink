@@ -2,7 +2,7 @@
 
 # 📖 User Guide
 
-### Complete Guide to Using XPush
+### Complete Guide to Using xlink
 
 [🏠 Home](../README.md) • [📚 Docs](README.md) • [🎯 Examples](../examples/) • [❓ FAQ](FAQ.md)
 
@@ -66,7 +66,7 @@ Master the details
 </tr>
 </table>
 
-**XPush** is a unified cross-platform communication SDK that supports multiple communication channels including LAN, WiFi, Bluetooth, Mesh, Memory, and Remote. This guide will walk you through everything from basic setup to advanced usage patterns.
+**xlink** is a unified cross-platform communication SDK that supports multiple communication channels including LAN, WiFi, Bluetooth, Mesh, Memory, and Remote. This guide will walk you through everything from basic setup to advanced usage patterns.
 
 > 💡 **Tip**: This guide assumes basic knowledge of Rust and async programming. If you're new to Rust, check out the [Rust Book](https://doc.rust-lang.org/book/) first.
 
@@ -176,7 +176,7 @@ cargo edit add xlink
 Let's verify your installation with a simple example:
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -195,10 +195,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
-    println!("✅ XPush SDK is ready!");
+    println!("✅ xlink SDK is ready!");
 
     Ok(())
 }
@@ -223,7 +223,7 @@ cargo run
 
 **Expected Output:**
 ```
-✅ XPush SDK is ready!
+✅ xlink SDK is ready!
 ```
 
 </details>
@@ -242,7 +242,7 @@ Understanding these core concepts will help you use the SDK effectively.
 
 ```mermaid
 graph TD
-    A[Your Application] --> B[UnifiedPushSDK]
+    A[Your Application] --> B[XLink]
     B --> C[CapabilityManager]
     B --> D[Channel Manager]
     B --> E[Router]
@@ -263,15 +263,15 @@ graph TD
     style G fill:#4fc3f7
 ```
 
-### 1️⃣ UnifiedPushSDK
+### 1️⃣ XLink
 
-**What it is:** The main entry point for the XPush SDK that orchestrates all communication and encryption capabilities.
+**What it is:** The main entry point for the xlink SDK that orchestrates all communication and encryption capabilities.
 
 **Why it matters:** Provides a unified interface for all cross-channel communication needs.
 
 **Example:**
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -288,14 +288,14 @@ let capabilities = DeviceCapabilities {
     data_cost_sensitive: false,
 };
 
-let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+let sdk = XLink::new(capabilities, vec![]).await?;
 sdk.start().await?;
 ```
 
 <details>
 <summary><b>📚 Learn More</b></summary>
 
-The UnifiedPushSDK manages:
+The XLink manages:
 - Device capability detection and management
 - Channel lifecycle (LAN, WiFi, Bluetooth, Mesh, Memory, Remote)
 - Message routing and delivery
@@ -306,7 +306,7 @@ The UnifiedPushSDK manages:
 
 ### 2️⃣ Communication Channels
 
-**What it is:** Different communication methods that XPush uses to send and receive messages.
+**What it is:** Different communication methods that xlink uses to send and receive messages.
 
 **Key Features:**
 - ✅ **LAN** - Local area network communication
@@ -318,11 +318,13 @@ The UnifiedPushSDK manages:
 
 **Example:**
 ```rust
-use xlink::channels::{LanChannel, WifiChannel, MemoryChannel};
+use std::sync::Arc;
+use xlink::channels::{LanChannel, MemoryChannel};
 
-let lan = LanChannel::new()?;
-let wifi = WifiChannel::new()?;
-let memory = MemoryChannel::new()?;
+let lan_channel: Arc<dyn xlink::core::traits::Channel> = Arc::new(LanChannel::new());
+let memory_channel: Arc<dyn xlink::core::traits::Channel> = Arc::new(MemoryChannel::new(handler, 50));
+
+let channels = vec![lan_channel, memory_channel];
 ```
 
 ### 3️⃣ Smart Channel Routing
@@ -344,7 +346,7 @@ if device.has_wifi() {
 </td>
 <td width="50%">
 
-**XPush Approach**
+**xlink Approach**
 ```rust
 // Automatic optimal routing
 let route = router.select_optimal_route(
@@ -367,7 +369,7 @@ router.send(route, &message).await?;
 Every application must initialize the SDK before use:
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -386,7 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
     Ok(())
@@ -397,7 +399,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Method | Use Case | Performance | Complexity |
 |--------|----------|-------------|------------|
-| `UnifiedPushSDK::new()` | Quick start, development | ⚡ Fast | 🟢 Simple |
+| `XLink::new()` | Quick start, development | ⚡ Fast | 🟢 Simple |
 | Custom channels | Production, custom needs | ⚡⚡ Optimized | 🟡 Moderate |
 
 </div>
@@ -500,7 +502,7 @@ for event in sdk.receiver() {
 
 **1. Message Types**
 
-XPush supports various message types for different communication scenarios:
+xlink supports various message types for different communication scenarios:
 
 ```rust
 use xlink::core::types::MessagePayload;
@@ -570,7 +572,7 @@ key_cache.set(&device_id, &public_key)?;
 <summary><b>🎯 Complete Example</b></summary>
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::{DeviceCapabilities, MessagePayload};
 
 #[tokio::main]
@@ -586,10 +588,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
-    let payload = MessagePayload::Text("Hello, XPush!".to_string());
+    let payload = MessagePayload::Text("Hello, xlink!".to_string());
 
     sdk.send(recipient_id, payload).await?;
     println!("✅ Message sent successfully");
@@ -607,11 +609,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Multi-Channel Communication
 
-XPush supports multiple communication channels for flexible device connectivity:
+xlink supports multiple communication channels for flexible device connectivity:
 
 ```rust
 use xlink::channels::{LanChannel, WifiChannel, BluetoothChannel, MeshChannel, MemoryChannel};
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 
 #[tokio::main]
@@ -635,7 +637,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(MemoryChannel::new()?),
     ];
 
-    let sdk = UnifiedPushSDK::new(capabilities, channels).await?;
+    let sdk = XLink::new(capabilities, channels).await?;
     sdk.start().await?;
 
     Ok(())
@@ -654,7 +656,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### End-to-End Encryption
 
-XPush provides built-in end-to-end encryption using X25519 key exchange and ChaCha20Poly1305:
+xlink provides built-in end-to-end encryption using X25519 key exchange and ChaCha20Poly1305:
 
 ```rust
 use xlink::crypto::CryptoEngine;
@@ -681,7 +683,7 @@ let decrypted = crypto.decrypt(
 Create and manage secure group communications:
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::MessagePayload;
 
 let group_id = sdk.create_group(
@@ -742,7 +744,7 @@ sdk.cancel_stream(stream_id).await?;
 ```rust
 #[tokio::main]
 async fn main() {
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await.unwrap();
+    let sdk = XLink::new(capabilities, vec![]).await.unwrap();
     sdk.start().await.unwrap();
     
     do_work().await;
@@ -754,7 +756,7 @@ async fn main() {
 
 **Use Proper Async Pattern**
 ```rust
-let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+let sdk = XLink::new(capabilities, vec![]).await?;
 sdk.start().await?;
 
 // Use SDK for communication
@@ -785,7 +787,7 @@ match sdk.send(recipient, payload).await {
 **Clean Up Resources**
 ```rust
 {
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
     // SDK automatically cleaned up on drop
 }
@@ -839,7 +841,7 @@ tokio::time::sleep(duration).await;
 > let private_key = "x25519-1234567890";
 > 
 > // ✅ Good
-> let private_key = env::var("XPUSH_PRIVATE_KEY")?;
+> let private_key = env::var("XLINK_PRIVATE_KEY")?;
 > ```
 
 > **📊 Monitoring Tip**: Enable metrics in production:
@@ -855,11 +857,11 @@ tokio::time::sleep(duration).await;
 ### Pattern 1: Device-to-Device Messaging
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::{DeviceCapabilities, MessagePayload};
 
 async fn send_message(
-    sdk: &UnifiedPushSDK,
+    sdk: &XLink,
     recipient: &str,
     message: &str
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -893,7 +895,7 @@ async fn discover_devices(
 use xlink::group::GroupManager;
 
 async fn broadcast_to_group(
-    sdk: &UnifiedPushSDK,
+    sdk: &XLink,
     group_id: &str,
     message: &str
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1020,7 +1022,7 @@ Real-world code samples
 
 **[📖 API Reference](API_REFERENCE.md)** • **[❓ FAQ](FAQ.md)** • **[🐛 Report Issue](../../issues)** • **[🤝 Contributing](CONTRIBUTING.md)**
 
-Made with ❤️ by the XPush Team
+Made with ❤️ by the xlink Team
 
 [⬆ Back to Top](#-user-guide)
 

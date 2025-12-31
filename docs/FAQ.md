@@ -32,11 +32,11 @@
 </div>
 
 <details>
-<summary><b>❓ What is XPush?</b></summary>
+<summary><b>❓ What is xlink?</b></summary>
 
 <br>
 
-**XPush** is a unified cross-platform communication SDK that supports multiple communication channels for secure device-to-device messaging. It provides:
+**xlink** is a unified cross-platform communication SDK that supports multiple communication channels for secure device-to-device messaging. It provides:
 
 - ✅ **Multi-Channel Communication** - LAN, WiFi, Bluetooth, Mesh, Memory, and Remote channels
 - ✅ **End-to-End Encryption** - X25519 key exchange with ChaCha20Poly1305 encryption
@@ -58,7 +58,7 @@ It's designed for developers who need secure, flexible device communication acro
 <table>
 <tr>
 <th>Feature</th>
-<th>XPush</th>
+<th>xlink</th>
 <th>Alternative A</th>
 <th>Alternative B</th>
 </tr>
@@ -293,7 +293,7 @@ cargo build --release
 **Verification:**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -312,8 +312,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
-    println!("✅ XPush installation successful!");
+    let sdk = XLink::new(capabilities, vec![]).await?;
+    println!("✅ xlink installation successful!");
 
     Ok(())
 }
@@ -457,7 +457,7 @@ docker pull ghcr.io/xlink/xlink:latest
 **5-Minute Quick Start:**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -478,13 +478,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 2. Initialize SDK
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
 
     // 3. Start the SDK
     sdk.start().await?;
 
     // 4. Send a message
-    let payload = xlink::core::types::MessagePayload::Text("Hello, XPush!".to_string());
+    let payload = xlink::core::types::MessagePayload::Text("Hello, xlink!".to_string());
 
     // 5. Send to recipient (DeviceId)
     sdk.send(recipient_id, payload).await?;
@@ -525,7 +525,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 **Key Derivation:**
 - ✅ HKDF-SHA256 - HMAC-based key derivation
 
-**XPush uses industry-standard cryptography:**
+**xlink uses industry-standard cryptography:**
 - **X25519** for key exchange (Curve25519 elliptic curve)
 - **ChaCha20Poly1305** for authenticated encryption (IETF standard)
 - **Ed25519** for digital signatures
@@ -540,10 +540,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 <br>
 
-**Yes!** XPush supports multiple device connections through the channel system:
+**Yes!** xlink supports multiple device connections through the channel system:
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -563,7 +563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
     // Send messages to multiple recipients
@@ -601,7 +601,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 **Recommended Pattern:**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use xlink::core::error::Result;
@@ -621,7 +621,7 @@ async fn main() -> Result<()> {
         data_cost_sensitive: false,
     };
 
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
 
     match sdk.start().await {
         Ok(_) => {
@@ -644,10 +644,10 @@ async fn main() -> Result<()> {
 ```
 
 **Common Error Types:**
-- `XPushError::channel_disconnected()` - Channel-specific errors
-- `XPushError::encryption_failed()` - Encryption/decryption errors
-- `XPushError::group_not_found()` - Group management errors
-- `XPushError::device_not_found()` - Device lookup errors
+- `xlinkError::channel_disconnected()` - Channel-specific errors
+- `xlinkError::encryption_failed()` - Encryption/decryption errors
+- `xlinkError::group_not_found()` - Group management errors
+- `xlinkError::device_not_found()` - Device lookup errors
 
 **Error Types:**
 - [Error Reference](API_REFERENCE.md#error-handling)
@@ -659,12 +659,12 @@ async fn main() -> Result<()> {
 
 <br>
 
-**Yes!** XPush has full async/await support using Tokio.
+**Yes!** xlink has full async/await support using Tokio.
 
 **All async operations:**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -684,7 +684,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Async initialization
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
 
     // Async start
     sdk.start().await?;
@@ -701,7 +701,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 **Runtime Requirements:**
-- XPush requires a Tokio runtime
+- xlink requires a Tokio runtime
 - Use `#[tokio::main]` or `tokio::spawn` for async execution
 
 **Best Practices:**
@@ -736,22 +736,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 <th>Latency (P99)</th>
 </tr>
 <tr>
-<td>AES-256-GCM Encrypt</td>
-<td>500 MB/s</td>
-<td>0.5 ms</td>
-<td>2 ms</td>
+<td>ChaCha20Poly1305 Encrypt</td>
+<td>~400 MB/s</td>
+<td>0.3 ms</td>
+<td>1.5 ms</td>
 </tr>
 <tr>
-<td>ECDSA-P256 Sign</td>
-<td>10K ops/s</td>
-<td>0.1 ms</td>
-<td>0.5 ms</td>
+<td>Ed25519 Sign</td>
+<td>~15K ops/s</td>
+<td>0.08 ms</td>
+<td>0.3 ms</td>
 </tr>
 <tr>
 <td>SHA-256 Hash</td>
-<td>1 GB/s</td>
+<td>~1 GB/s</td>
 <td>0.05 ms</td>
 <td>0.2 ms</td>
+</tr>
+<tr>
+<td>Message Delivery (Memory)</td>
+<td>~10K msgs/s</td>
+<td>0.5 ms</td>
+<td>1.2 ms</td>
 </tr>
 </table>
 
@@ -1052,7 +1058,7 @@ Error: SDK already initialized or in invalid state
 **Solution:**
 
 ```rust
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 use xlink::core::types::DeviceCapabilities;
 use xlink::core::types::DeviceId;
 use std::collections::HashSet;
@@ -1072,7 +1078,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create and start SDK once
-    let sdk = UnifiedPushSDK::new(capabilities, vec![]).await?;
+    let sdk = XLink::new(capabilities, vec![]).await?;
     sdk.start().await?;
 
     // Use SDK for operations...
@@ -1144,7 +1150,7 @@ env_logger::init();
   ```
 
 - [ ] Is hardware acceleration available?
-  - XPush automatically uses AES-NI when available on x86_64
+  - xlink automatically uses AES-NI when available on x86_64
 
 - [ ] Are you using appropriate channel selection?
   ```rust
