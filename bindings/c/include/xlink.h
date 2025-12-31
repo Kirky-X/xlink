@@ -1,5 +1,5 @@
-#ifndef XPUSH_C_BINDINGS_H
-#define XPUSH_C_BINDINGS_H
+#ifndef XLINK_C_BINDINGS_H
+#define XLINK_C_BINDINGS_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -18,10 +18,10 @@ typedef xlink_uuid_t xlink_device_id_t;
 typedef xlink_uuid_t xlink_group_id_t;
 
 typedef enum {
-    XPUSH_PRIORITY_LOW = 0,
-    XPUSH_PRIORITY_NORMAL = 1,
-    XPUSH_PRIORITY_HIGH = 2,
-    XPUSH_PRIORITY_CRITICAL = 3
+    XLINK_PRIORITY_LOW = 0,
+    XLINK_PRIORITY_NORMAL = 1,
+    XLINK_PRIORITY_HIGH = 2,
+    XLINK_PRIORITY_CRITICAL = 3
 } xlink_priority_t;
 
 // --- SDK 生命周期管理 ---
@@ -64,4 +64,4 @@ int32_t xlink_broadcast_text(xlink_sdk_t* sdk, xlink_group_id_t group_id, const 
 }
 #endif
 
-#endif // XPUSH_C_BINDINGS_H
+#endif // XLINK_C_BINDINGS_H
