@@ -5,6 +5,9 @@ edition = "2021"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 description = "Unified Multi-Channel Communication SDK"
 license = "MIT"
+documentation = "https://docs.rs/xlink"
+homepage = "https://github.com/Kirky-X/xlink"
+repository = "https://github.com/Kirky-X/xlink"
 
 [dependencies]
 tokio = { version = "1.32", features = ["full"] }
