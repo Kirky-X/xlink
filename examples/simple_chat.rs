@@ -6,7 +6,7 @@ use xlink::channels::memory::MemoryChannel;
 use xlink::core::types::{
     ChannelState, ChannelType, DeviceCapabilities, DeviceId, DeviceType, MessagePayload,
 };
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mem_channel = Arc::new(MemoryChannel::new(Arc::new(DemoHandler), 50)); // 50ms latency
 
-    let sdk = UnifiedPushSDK::new(alice_caps, vec![mem_channel.clone()]).await?;
+    let sdk = XLink::new(alice_caps, vec![mem_channel.clone()]).await?;
     sdk.start().await?;
 
     // 4. Register Bob's capabilities in Alice's manager so routing works

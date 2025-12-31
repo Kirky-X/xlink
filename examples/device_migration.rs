@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use xlink::channels::memory::MemoryChannel;
 use xlink::core::types::{ChannelType, DeviceCapabilities, DeviceId, DeviceType};
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mem_channel = Arc::new(MemoryChannel::new(Arc::new(DemoHandler), 0));
-    let sdk_old = UnifiedPushSDK::new(caps.clone(), vec![mem_channel.clone()]).await?;
+    let sdk_old = XLink::new(caps.clone(), vec![mem_channel.clone()]).await?;
     sdk_old.start().await?;
 
     log::info!("Old device initialized. ID: {}", old_id);
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     new_caps.device_id = new_id;
     new_caps.device_name = "New Phone".to_string();
 
-    let mut sdk_new = UnifiedPushSDK::new(new_caps, vec![mem_channel.clone()]).await?;
+    let mut sdk_new = XLink::new(new_caps, vec![mem_channel.clone()]).await?;
     sdk_new.start().await?;
     log::info!("New device initialized. ID: {}", new_id);
 

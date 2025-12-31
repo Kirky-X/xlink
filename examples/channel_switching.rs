@@ -6,7 +6,7 @@ use xlink::channels::memory::MemoryChannel;
 use xlink::core::types::{
     ChannelState, ChannelType, DeviceCapabilities, DeviceId, DeviceType, MessagePayload,
 };
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mem_channel = Arc::new(MemoryChannel::new(Arc::new(DemoHandler), 50));
-    let sdk = UnifiedPushSDK::new(caps, vec![mem_channel.clone()]).await?;
+    let sdk = XLink::new(caps, vec![mem_channel.clone()]).await?;
     sdk.start().await?;
 
     // 2. Setup a target device
