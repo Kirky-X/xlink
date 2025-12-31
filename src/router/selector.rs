@@ -1,5 +1,5 @@
 use crate::capability::manager::CapabilityManager;
-use crate::core::error::{Result, XPushError};
+use crate::core::error::{Result, XLinkError};
 use crate::core::traits::Channel;
 use crate::core::types::{ChannelType, DeviceId, Message, MessagePayload};
 use crate::router::scoring::Scorer;
@@ -153,7 +153,7 @@ impl Router {
 
             Ok(channel)
         } else {
-            Err(XPushError::no_route_found(
+            Err(XLinkError::no_route_found(
                 target.to_string(),
                 "No suitable channel found for routing".to_string(),
                 file!(),

@@ -1,6 +1,6 @@
 use crate::core::traits::MessageHandler;
 use crate::core::types::{ChannelType, DeviceCapabilities, DeviceId, DeviceType, MessagePayload};
-use crate::UnifiedPushSDK;
+use crate::XLink;
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 #[repr(C)]
 pub struct xlink_sdk {
-    pub(crate) inner: Arc<UnifiedPushSDK>,
+    pub(crate) inner: Arc<XLink>,
     pub(crate) rt: Runtime,
 }
 
@@ -52,7 +52,7 @@ pub extern "C" fn xlink_init() -> *mut xlink_sdk {
         let memory_channel = Arc::new(crate::channels::memory::MemoryChannel::new(handler, 10));
         let channels: Vec<Arc<dyn crate::core::traits::Channel>> = vec![memory_channel];
 
-        UnifiedPushSDK::new(config, channels).await
+        XLink::new(config, channels).await
     };
 
     match rt.block_on(sdk_future) {

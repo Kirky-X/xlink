@@ -1,8 +1,8 @@
 //! 协议相关错误 (08xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 协议版本不兼容 (0801)
     ///
     /// 当本地和远程协议版本不兼容时返回此错误

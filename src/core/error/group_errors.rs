@@ -1,8 +1,8 @@
 //! 群组相关错误 (04xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 群组不存在 (0401)
     ///
     /// 当尝试操作不存在的群组时返回此错误

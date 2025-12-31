@@ -16,10 +16,10 @@
 //! # 示例
 //!
 //! ```rust
-//! use xlink::core::error::{XPushError, Result};
+//! use xlink::core::error::{XLinkError, Result};
 //!
 //! fn example() -> Result<()> {
-//!     Err(XPushError::device_not_found("device-001", file!()))
+//!     Err(XLinkError::device_not_found("device-001", file!()))
 //! }
 //! ```
 
@@ -463,15 +463,15 @@ impl fmt::Display for DetailedError {
 /// # 使用示例
 ///
 /// ```
-/// use xlink::core::error::{XPushError, Result};
+/// use xlink::core::error::{XLinkError, Result};
 ///
 /// fn example() -> Result<()> {
-///     Err(XPushError::device_not_found("device-001", file!()))
+///     Err(XLinkError::device_not_found("device-001", file!()))
 /// }
 /// ```
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 #[error("{message}")]
-pub struct XPushError {
+pub struct XLinkError {
     /// 错误码
     pub code: ErrorCode,
 
@@ -487,14 +487,14 @@ pub struct XPushError {
 
     /// 链式错误
     #[serde(default)]
-    pub source: Option<Box<XPushError>>,
+    pub source: Option<Box<XLinkError>>,
 
     /// 文档链接
     #[serde(skip_serializing_if = "Option::is_none")]
     pub documentation_url: Option<&'static str>,
 }
 
-impl XPushError {
+impl XLinkError {
     /// 创建新错误（内部方法）
     fn new_internal(
         code: ErrorCode,
@@ -566,7 +566,7 @@ impl XPushError {
 
     /// 设置链式错误源
     #[inline]
-    pub fn with_source(mut self, source: XPushError) -> Self {
+    pub fn with_source(mut self, source: XLinkError) -> Self {
         self.source = Some(Box::new(source));
         self
     }
@@ -684,10 +684,10 @@ impl XPushError {
 }
 
 /// 链式错误迭代器
-pub struct SourceIter<'a>(Option<&'a XPushError>);
+pub struct SourceIter<'a>(Option<&'a XLinkError>);
 
 impl<'a> Iterator for SourceIter<'a> {
-    type Item = &'a XPushError;
+    type Item = &'a XLinkError;
 
     fn next(&mut self) -> Option<Self::Item> {
         let current = self.0.take()?;
@@ -697,7 +697,7 @@ impl<'a> Iterator for SourceIter<'a> {
 }
 
 /// 从标准错误类型转换实现
-impl From<std::io::Error> for XPushError {
+impl From<std::io::Error> for XLinkError {
     #[inline]
     fn from(error: std::io::Error) -> Self {
         Self::new_internal(
@@ -714,7 +714,7 @@ impl From<std::io::Error> for XPushError {
     }
 }
 
-impl From<serde_json::Error> for XPushError {
+impl From<serde_json::Error> for XLinkError {
     #[inline]
     fn from(error: serde_json::Error) -> Self {
         Self::new_internal(
@@ -727,7 +727,7 @@ impl From<serde_json::Error> for XPushError {
     }
 }
 
-impl From<DetailedError> for XPushError {
+impl From<DetailedError> for XLinkError {
     #[inline]
     fn from(detailed: DetailedError) -> Self {
         Self {
@@ -737,14 +737,14 @@ impl From<DetailedError> for XPushError {
             context: Box::new(detailed.context),
             source: detailed
                 .root_cause
-                .map(|rc| Box::new(XPushError::from(*rc))),
+                .map(|rc| Box::new(XLinkError::from(*rc))),
             documentation_url: None,
         }
     }
 }
 
 /// 便捷类型别名
-pub type Result<T> = std::result::Result<T, XPushError>;
+pub type Result<T> = std::result::Result<T, XLinkError>;
 
 /// 错误统计信息
 ///
@@ -772,7 +772,7 @@ impl ErrorStatistics {
     }
 
     /// 记录一个错误
-    pub fn record(&mut self, error: &XPushError) {
+    pub fn record(&mut self, error: &XLinkError) {
         let code = error.code.0;
         *self.counts.entry(code).or_insert(0) += 1;
 
@@ -856,7 +856,7 @@ impl ErrorStatistics {
 ///
 /// 生成适合日志系统的格式化错误字符串
 #[inline]
-pub fn format_error_for_log(error: &XPushError) -> String {
+pub fn format_error_for_log(error: &XLinkError) -> String {
     error.to_log_string()
 }
 
@@ -864,7 +864,7 @@ pub fn format_error_for_log(error: &XPushError) -> String {
 ///
 /// 去除技术细节，提供用户可理解的消息
 #[inline]
-pub fn to_user_message(error: &XPushError) -> String {
+pub fn to_user_message(error: &XLinkError) -> String {
     error.message.clone()
 }
 
@@ -875,16 +875,16 @@ pub fn to_user_message(error: &XPushError) -> String {
 /// # 使用示例
 ///
 /// ```ignore
-/// use xlink::{xlink_error, core::error::XPushError};
+/// use xlink::{xlink_error, core::error::XLinkError};
 ///
-/// fn example() -> Result<(), XPushError> {
+/// fn example() -> Result<(), XLinkError> {
 ///     Err(xlink_error!(0201, Channel, "通道初始化失败", "Bluetooth not available"))
 /// }
 /// ```
 #[macro_export]
 macro_rules! xlink_error {
     ($code:expr, $category:ident, $message:expr, $details:expr) => {
-        XPushError::new_internal(
+        XLinkError::new_internal(
             ErrorCode($code),
             ErrorCategory::$category,
             $message.to_string(),
@@ -894,7 +894,7 @@ macro_rules! xlink_error {
     };
     ($code:expr, $category:ident, $message:expr, $details:expr, $($method:ident($value:expr)),+) => {
         {
-            let mut error = XPushError::new_internal(
+            let mut error = XLinkError::new_internal(
                 ErrorCode($code),
                 ErrorCategory::$category,
                 $message.to_string(),
@@ -914,9 +914,9 @@ macro_rules! xlink_error {
 /// # 使用示例
 ///
 /// ```ignore
-/// use xlink::{with_context, core::error::XPushError};
+/// use xlink::{with_context, core::error::XLinkError};
 ///
-/// fn example() -> Result<(), XPushError> {
+/// fn example() -> Result<(), XLinkError> {
 ///     let result = std::fs::read_to_string("config.json")
 ///         .map_err(|e| with_context!(e, "config.json", "device-001"))?;
 ///     Ok(())
@@ -925,10 +925,10 @@ macro_rules! xlink_error {
 #[macro_export]
 macro_rules! with_context {
     ($error:expr, $key:expr, $device_id:expr) => {
-        $crate::core::error::XPushError::storage_read_failed($key, format!("{}", $error), file!())
+        $crate::core::error::XLinkError::storage_read_failed($key, format!("{}", $error), file!())
             .with_device_id($device_id)
     };
 }
 
 // Re-export all error creation methods from submodules
-// Note: Error creation methods are implemented on XPushError directly in submodules
+// Note: Error creation methods are implemented on XLinkError directly in submodules

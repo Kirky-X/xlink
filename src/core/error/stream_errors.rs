@@ -1,8 +1,8 @@
 //! 流媒体相关错误 (06xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 流初始化失败 (0601)
     ///
     /// 当媒体流初始化失败时返回此错误

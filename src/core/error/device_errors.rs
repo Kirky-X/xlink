@@ -1,8 +1,8 @@
 //! 设备相关错误 (05xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 设备未找到 (0501)
     ///
     /// 当设备不存在或已被移除时返回此错误

@@ -1,8 +1,8 @@
 //! 加密相关错误 (03xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 加密初始化失败 (0301)
     ///
     /// 当加密模块初始化失败时返回此错误

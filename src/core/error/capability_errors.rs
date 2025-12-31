@@ -1,8 +1,8 @@
 //! 能力匹配相关错误 (09xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 能力不匹配 (0901)
     ///
     /// 当设备能力不满足要求时返回此错误

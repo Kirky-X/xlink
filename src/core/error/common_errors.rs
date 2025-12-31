@@ -1,8 +1,8 @@
 //! 通用系统错误 (01xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 超时错误 (0101)
     ///
     /// 当操作超时时返回此错误

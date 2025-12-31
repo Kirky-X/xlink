@@ -1,4 +1,4 @@
-use crate::core::error::{Result, XPushError};
+use crate::core::error::{Result, XLinkError};
 use crate::core::types::{
     DeviceId, Group, GroupId, GroupMember, MemberRole, MemberStatus, Message, MessagePayload,
     MessagePriority,
@@ -122,7 +122,7 @@ impl GroupManager {
             .collect();
 
         if member_ids.is_empty() {
-            return Err(XPushError::invalid_input(
+            return Err(XLinkError::invalid_input(
                 "member_keys",
                 "No valid member keys found for group creation",
                 file!(),
@@ -178,7 +178,7 @@ impl GroupManager {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -217,7 +217,7 @@ impl GroupManager {
 
         // 检查是否已存在
         if self.groups.contains_key(&group_id) {
-            return Err(XPushError::group_already_exists(
+            return Err(XLinkError::group_already_exists(
                 group_id.to_string(),
                 file!(),
             ));
@@ -236,7 +236,7 @@ impl GroupManager {
             .collect();
 
         if member_keys.is_empty() {
-            return Err(XPushError::invalid_input(
+            return Err(XLinkError::invalid_input(
                 "member_keys",
                 "No valid member keys found for joining group",
                 file!(),
@@ -311,7 +311,7 @@ impl GroupManager {
         let group = self
             .groups
             .get(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
         let message_id = Uuid::new_v4();
         let mut successful_devices = HashSet::new();
@@ -325,7 +325,7 @@ impl GroupManager {
             Ok(encrypted) => encrypted,
             Err(e) => {
                 log::error!("Failed to encrypt group message: {}", e);
-                return Err(XPushError::encryption_failed(
+                return Err(XLinkError::encryption_failed(
                     "TreeKEM",
                     &e.to_string(),
                     file!(),
@@ -602,7 +602,7 @@ impl GroupManager {
             }
             Err(e) => {
                 log::error!("Failed to rotate group key for group {}: {}", group_id, e);
-                Err(XPushError::key_derivation_failed(
+                Err(XLinkError::key_derivation_failed(
                     "TreeKEM key rotation",
                     &e.to_string(),
                     file!(),
@@ -618,7 +618,7 @@ impl GroupManager {
     ) -> Result<MessagePayload> {
         self.treekem_engine
             .encrypt_group_message(group_id, payload)
-            .map_err(|e| XPushError::encryption_failed("TreeKEM", &e.to_string(), file!()))
+            .map_err(|e| XLinkError::encryption_failed("TreeKEM", &e.to_string(), file!()))
     }
 
     pub fn decrypt_group_message(
@@ -628,7 +628,7 @@ impl GroupManager {
     ) -> Result<MessagePayload> {
         self.treekem_engine
             .decrypt_group_message(group_id, encrypted_payload)
-            .map_err(|e| XPushError::encryption_failed("TreeKEM", &e.to_string(), file!()))
+            .map_err(|e| XLinkError::encryption_failed("TreeKEM", &e.to_string(), file!()))
     }
 
     /// 处理群组密钥更新
@@ -663,7 +663,7 @@ impl GroupManager {
                     group_id,
                     e
                 );
-                Err(XPushError::key_derivation_failed(
+                Err(XLinkError::key_derivation_failed(
                     "TreeKEM key update",
                     &e.to_string(),
                     file!(),
@@ -830,7 +830,7 @@ impl GroupManager {
         let group = self
             .groups
             .get(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
         if group.members.len() <= MAX_SUBGROUP_SIZE {
             // 小群组直接广播

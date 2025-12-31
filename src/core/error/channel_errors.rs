@@ -1,8 +1,8 @@
 //! 通道相关错误 (02xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 通道初始化失败 (0201)
     ///
     /// 当通道模块初始化失败时返回此错误
@@ -15,9 +15,9 @@ impl XPushError {
     /// # Example
     ///
     /// ```
-    /// use xlink::core::error::XPushError;
+    /// use xlink::core::error::XLinkError;
     ///
-    /// let error = XPushError::channel_init_failed("Bluetooth not available", file!());
+    /// let error = XLinkError::channel_init_failed("Bluetooth not available", file!());
     /// ```
     #[inline]
     pub fn channel_init_failed<S: Into<String>>(details: S, location: &'static str) -> Self {

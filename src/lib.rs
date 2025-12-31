@@ -38,7 +38,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-pub struct UnifiedPushSDK {
+pub struct XLink {
     device_id: DeviceId,
     router: Arc<Router>,
     cap_manager: Arc<CapabilityManager>,
@@ -62,7 +62,7 @@ pub struct UnifiedPushSDK {
     plugins: Arc<DashMap<String, Arc<dyn crate::core::traits::Plugin>>>,
 }
 
-impl Drop for UnifiedPushSDK {
+impl Drop for XLink {
     fn drop(&mut self) {
         log::info!("Dropping UnifiedPush SDK for device {}", self.device_id);
 
@@ -175,7 +175,7 @@ impl MessageHandler for SdkMessageHandler {
                 "DoS Protection: Rate limit exceeded for device {}",
                 message.sender
             );
-            return Err(crate::core::error::XPushError::resource_exhausted(
+            return Err(crate::core::error::XLinkError::resource_exhausted(
                 format!("Rate limit exceeded for device {}", message.sender),
                 101,
                 100,
@@ -246,7 +246,7 @@ impl MessageHandler for SdkMessageHandler {
     }
 }
 
-impl UnifiedPushSDK {
+impl XLink {
     pub async fn new(config: DeviceCapabilities, channels: Vec<Arc<dyn Channel>>) -> Result<Self> {
         Self::with_storage_path(config, channels, "storage".to_string()).await
     }
@@ -433,7 +433,7 @@ impl UnifiedPushSDK {
     pub fn export_sdk_state(&self) -> Result<Vec<u8>> {
         let crypto_state = self.crypto.export_state()?;
         let serialized = serde_json::to_vec(&crypto_state).map_err(|e| {
-            crate::core::error::XPushError::serialization_failed(
+            crate::core::error::XLinkError::serialization_failed(
                 "export_sdk_state",
                 &format!("Failed to serialize SDK state: {}", e),
                 file!(),
@@ -446,7 +446,7 @@ impl UnifiedPushSDK {
     pub fn import_sdk_state(&mut self, data: &[u8]) -> Result<()> {
         let crypto_state: crate::crypto::engine::CryptoState = serde_json::from_slice(data)
             .map_err(|e| {
-                crate::core::error::XPushError::serialization_failed(
+                crate::core::error::XLinkError::serialization_failed(
                     "import_sdk_state",
                     &format!("Failed to deserialize SDK state: {}", e),
                     file!(),
@@ -546,7 +546,7 @@ impl UnifiedPushSDK {
                         "DoS Protection: Send rate limit exceeded for device {}",
                         self.device_id
                     );
-                    return Err(crate::core::error::XPushError::resource_exhausted(
+                    return Err(crate::core::error::XLinkError::resource_exhausted(
                         format!("Send rate limit exceeded for device {}", self.device_id),
                         (*count).into(),
                         100,

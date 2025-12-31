@@ -1,6 +1,6 @@
 use crate::core::error::Result;
 #[allow(unused_imports)]
-use crate::core::error::XPushError;
+use crate::core::error::XLinkError;
 use crate::core::traits::Channel;
 use crate::core::types::{ChannelState, ChannelType, DeviceId, Message, NetworkType};
 use async_trait::async_trait;
@@ -143,7 +143,7 @@ impl Channel for RemoteChannel {
                     .clone()
                     .unwrap_or_else(|| message.recipient.to_string());
                 let url = format!("{}/{}", current_server, topic_str);
-                let payload = serde_json::to_vec(&message).map_err(Into::<XPushError>::into)?;
+                let payload = serde_json::to_vec(&message).map_err(Into::<XLinkError>::into)?;
 
                 log::info!(
                     "[Remote] Attempting to publish message {} to ntfy topic {} on server {}",
@@ -192,7 +192,7 @@ impl Channel for RemoteChannel {
                                 continue;
                             }
 
-                            return Err(XPushError::channel_disconnected(
+                            return Err(XLinkError::channel_disconnected(
                                 format!("ntfy request failed: {} - {}", status, error_text),
                                 file!(),
                             ));
@@ -212,7 +212,7 @@ impl Channel for RemoteChannel {
                             continue;
                         }
 
-                        return Err(XPushError::channel_disconnected(
+                        return Err(XLinkError::channel_disconnected(
                             format!(
                                 "Failed to send to ntfy after {} attempts: {}",
                                 attempts + 1,

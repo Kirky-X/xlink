@@ -1,4 +1,4 @@
-use crate::core::error::{Result, XPushError};
+use crate::core::error::{Result, XLinkError};
 use crate::core::traits::{Channel, MessageHandler};
 use crate::core::types::{ChannelState, ChannelType, DeviceId, Message, NetworkType};
 use async_trait::async_trait;
@@ -57,7 +57,7 @@ impl Channel for LanChannel {
                 log::info!("[LanChannel] Sent message {} to {}", message.id, addr);
                 Ok(())
             }
-            None => Err(XPushError::channel_init_failed(
+            None => Err(XLinkError::channel_init_failed(
                 format!("No address known for device {}", message.recipient),
                 file!(),
             )),

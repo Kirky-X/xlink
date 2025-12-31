@@ -2,7 +2,7 @@
 //!
 //! 此模块提供通用的通道实现，帮助减少蓝牙、Mesh、WiFi等物理通道的重复代码
 
-use crate::core::error::{Result, XPushError};
+use crate::core::error::{Result, XLinkError};
 use crate::core::types::{ChannelState, DeviceId, Message, NetworkType};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -132,7 +132,7 @@ impl<T> BaseChannel<T> {
             }
         }
 
-        Err(XPushError::channel_init_failed(
+        Err(XLinkError::channel_init_failed(
             get_error_msg(&message.recipient),
             file!(),
         ))

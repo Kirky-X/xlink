@@ -17,5 +17,5 @@ pub mod types;
 // 重新导出常用类型，便于使用
 pub use error::{
     ErrorCategory, ErrorCode, ErrorContext, ErrorStatistics, ImpactScope, Result, RetrySuggestion,
-    XPushError,
+    XLinkError,
 };

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-use crate::core::error::XPushError;
+use crate::core::error::XLinkError;
 use crate::core::types::{DeviceId, GroupId, MessagePayload};
 
 type Key = [u8; 32];
@@ -83,12 +83,12 @@ impl TreeKemEngine {
             .insert(device_id, public_key.to_bytes().to_vec());
     }
 
-    pub fn get_device_public_key(&self, device_id: DeviceId) -> Result<Vec<u8>, XPushError> {
+    pub fn get_device_public_key(&self, device_id: DeviceId) -> Result<Vec<u8>, XLinkError> {
         self.device_public_keys
             .get(&device_id)
             .map(|k| k.clone())
             .ok_or_else(|| {
-                XPushError::key_derivation_failed(
+                XLinkError::key_derivation_failed(
                     "X25519",
                     &format!("Device key not found: {}", device_id),
                     file!(),
@@ -105,7 +105,7 @@ impl TreeKemEngine {
         &self,
         group_id: GroupId,
         member_ids: Vec<DeviceId>,
-    ) -> Result<TreeKemGroup, XPushError> {
+    ) -> Result<TreeKemGroup, XLinkError> {
         let mut tree = HashMap::new();
         let mut member_devices = HashMap::new();
 
@@ -148,24 +148,24 @@ impl TreeKemEngine {
         &self,
         group_id: GroupId,
         payload: &MessagePayload,
-    ) -> Result<MessagePayload, XPushError> {
+    ) -> Result<MessagePayload, XLinkError> {
         let group = self
             .groups
             .get(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
-        let plaintext = serde_json::to_vec(payload).map_err(Into::<XPushError>::into)?;
+        let plaintext = serde_json::to_vec(payload).map_err(Into::<XLinkError>::into)?;
 
         let mut nonce_bytes = [0u8; 24];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = chacha20poly1305::XNonce::from(nonce_bytes);
 
         let cipher = XChaCha20Poly1305::new_from_slice(&group.group_secret).map_err(|e| {
-            XPushError::encryption_failed("XChaCha20Poly1305 init", &e.to_string(), file!())
+            XLinkError::encryption_failed("XChaCha20Poly1305 init", &e.to_string(), file!())
         })?;
 
         let ciphertext = cipher.encrypt(&nonce, &*plaintext).map_err(|e| {
-            XPushError::encryption_failed("XChaCha20Poly1305 encrypt", &e.to_string(), file!())
+            XLinkError::encryption_failed("XChaCha20Poly1305 encrypt", &e.to_string(), file!())
         })?;
 
         let mut result = nonce_bytes.to_vec();
@@ -177,11 +177,11 @@ impl TreeKemEngine {
         &self,
         group_id: GroupId,
         payload: &MessagePayload,
-    ) -> Result<MessagePayload, XPushError> {
+    ) -> Result<MessagePayload, XLinkError> {
         match payload {
             MessagePayload::Binary(ciphertext) => {
                 if ciphertext.len() < 24 {
-                    return Err(XPushError::invalid_ciphertext(
+                    return Err(XLinkError::invalid_ciphertext(
                         "Ciphertext too short".to_string(),
                         file!(),
                     ));
@@ -190,7 +190,7 @@ impl TreeKemEngine {
                 let group = self
                     .groups
                     .get(&group_id)
-                    .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+                    .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
                 let mut nonce_bytes = [0u8; 24];
                 nonce_bytes.copy_from_slice(&ciphertext[0..24]);
@@ -198,7 +198,7 @@ impl TreeKemEngine {
 
                 let cipher =
                     XChaCha20Poly1305::new_from_slice(&group.group_secret).map_err(|e| {
-                        XPushError::encryption_failed(
+                        XLinkError::encryption_failed(
                             "XChaCha20Poly1305 init",
                             &e.to_string(),
                             file!(),
@@ -206,7 +206,7 @@ impl TreeKemEngine {
                     })?;
 
                 let decrypted = cipher.decrypt(&nonce, &ciphertext[24..]).map_err(|e| {
-                    XPushError::encryption_failed(
+                    XLinkError::encryption_failed(
                         "XChaCha20Poly1305 decrypt",
                         &e.to_string(),
                         file!(),
@@ -214,11 +214,11 @@ impl TreeKemEngine {
                 })?;
 
                 let payload: MessagePayload =
-                    serde_json::from_slice(&decrypted).map_err(Into::<XPushError>::into)?;
+                    serde_json::from_slice(&decrypted).map_err(Into::<XLinkError>::into)?;
 
                 Ok(payload)
             }
-            _ => Err(XPushError::invalid_payload_type(
+            _ => Err(XLinkError::invalid_payload_type(
                 "Expected binary payload for group message".to_string(),
                 &[],
                 file!(),
@@ -226,16 +226,16 @@ impl TreeKemEngine {
         }
     }
 
-    pub fn rotate_group_key(&self, group_id: GroupId) -> Result<(), XPushError> {
+    pub fn rotate_group_key(&self, group_id: GroupId) -> Result<(), XLinkError> {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
         let mut new_secret = [0u8; 32];
         OsRng.fill_bytes(&mut new_secret);
 
-        let info = b"XPush_TreeKEM_KeyRotation_v1".to_vec();
+        let info = b"xLink_TreeKEM_KeyRotation_v1".to_vec();
         let hkdf = Hkdf::<Sha256>::new(Some(&group.group_secret), &new_secret);
         let mut okm = [0u8; 64];
         hkdf.expand(&info, &mut okm).unwrap();
@@ -250,7 +250,7 @@ impl TreeKemEngine {
         &self,
         group_id: GroupId,
         device_id: DeviceId,
-    ) -> Result<UpdatePath, XPushError> {
+    ) -> Result<UpdatePath, XLinkError> {
         self.rotate_group_key(group_id)?;
         self.add_member(group_id, device_id)
     }
@@ -259,11 +259,11 @@ impl TreeKemEngine {
         &self,
         group_id: GroupId,
         update_path: &UpdatePath,
-    ) -> Result<(), XPushError> {
+    ) -> Result<(), XLinkError> {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
         for (i, path_secret) in update_path.path_secrets.iter().enumerate() {
             let node_id = (i + 1) as u32;
@@ -280,11 +280,11 @@ impl TreeKemEngine {
         &self,
         group_id: GroupId,
         device_id: DeviceId,
-    ) -> Result<UpdatePath, XPushError> {
+    ) -> Result<UpdatePath, XLinkError> {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
         let new_node_id = (group.tree.len() + 1) as u32;
         let private_key = StaticSecret::random_from_rng(OsRng);
@@ -303,7 +303,7 @@ impl TreeKemEngine {
 
         let secret = Self::derive_path_secret(&group.group_secret, new_node_id);
 
-        let info = b"XPush_TreeKEM_PathSecret";
+        let info = b"xLink_TreeKEM_PathSecret";
         let hkdf = Hkdf::<Sha256>::new(None, &secret);
         let mut okm = [0u8; 64];
         hkdf.expand(info, &mut okm).unwrap();
@@ -322,7 +322,7 @@ impl TreeKemEngine {
                 break;
             }
             let secret = Self::derive_path_secret(path_secrets.last().unwrap(), parent_id);
-            let info = b"XPush_TreeKEM_PathSecret";
+            let info = b"xLink_TreeKEM_PathSecret";
             let hkdf = Hkdf::<Sha256>::new(None, &secret);
             let mut okm = [0u8; 64];
             hkdf.expand(info, &mut okm).unwrap();
@@ -359,11 +359,11 @@ impl TreeKemEngine {
         })
     }
 
-    pub fn remove_member(&self, group_id: GroupId, device_id: DeviceId) -> Result<(), XPushError> {
+    pub fn remove_member(&self, group_id: GroupId, device_id: DeviceId) -> Result<(), XLinkError> {
         let mut group = self
             .groups
             .get_mut(&group_id)
-            .ok_or_else(|| XPushError::group_not_found(group_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::group_not_found(group_id.to_string(), file!()))?;
 
         if let Some(&node_id) = group.member_devices.get(&device_id) {
             if let Some(node) = group.tree.get_mut(&node_id) {
@@ -377,7 +377,7 @@ impl TreeKemEngine {
     }
 
     fn derive_path_secret(secret: &Key, node_id: u32) -> Key {
-        let mut info = b"XPush_TreeKEM_PathSecret_v1".to_vec();
+        let mut info = b"xLink_TreeKEM_PathSecret_v1".to_vec();
         info.extend_from_slice(&node_id.to_le_bytes());
 
         let hkdf = Hkdf::<Sha256>::new(Some(secret), secret);
@@ -386,9 +386,9 @@ impl TreeKemEngine {
         okm
     }
 
-    pub fn sign_message(&self, data: &[u8]) -> Result<Signature, XPushError> {
+    pub fn sign_message(&self, data: &[u8]) -> Result<Signature, XLinkError> {
         self.signing_key.try_sign(data).map_err(|e| {
-            XPushError::crypto_init_failed(
+            XLinkError::crypto_init_failed(
                 format!("Ed25519 signature creation failed: {}", e),
                 file!(),
             )
@@ -400,18 +400,18 @@ impl TreeKemEngine {
         data: &[u8],
         signature: &Signature,
         public_key: &[u8],
-    ) -> Result<bool, XPushError> {
+    ) -> Result<bool, XLinkError> {
         let pk: [u8; 32] = public_key.try_into().map_err(|_| {
-            XPushError::crypto_init_failed("Invalid Ed25519 public key length", file!())
+            XLinkError::crypto_init_failed("Invalid Ed25519 public key length", file!())
         })?;
         let verifying_key = VerifyingKey::from_bytes(&pk).map_err(|e| {
-            XPushError::crypto_init_failed(format!("Invalid Ed25519 public key: {}", e), file!())
+            XLinkError::crypto_init_failed(format!("Invalid Ed25519 public key: {}", e), file!())
         })?;
         verifying_key
             .verify(data, signature)
             .map(|_| true)
             .map_err(|e| {
-                XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!())
+                XLinkError::signature_verification_failed("Ed25519", &e.to_string(), file!())
             })
     }
 }

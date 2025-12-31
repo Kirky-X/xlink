@@ -1,4 +1,4 @@
-use crate::core::error::{Result, XPushError};
+use crate::core::error::{Result, XLinkError};
 use crate::core::types::DeviceId;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
@@ -42,7 +42,7 @@ fn is_weak_key(key: &[u8]) -> bool {
 fn secure_kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
     // 验证输入密钥
     if is_weak_key(rk) {
-        return Err(XPushError::key_derivation_failed(
+        return Err(XLinkError::key_derivation_failed(
             "HKDF-RK",
             "Weak or invalid root key detected",
             file!(),
@@ -53,7 +53,7 @@ fn secure_kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
     let mut okm = [0u8; 64];
 
     hk.expand(&[], &mut okm)
-        .map_err(|e| XPushError::key_derivation_failed("HKDF-RK", &e.to_string(), file!()))?;
+        .map_err(|e| XLinkError::key_derivation_failed("HKDF-RK", &e.to_string(), file!()))?;
 
     let mut new_rk = [0u8; 32];
     let mut new_ck = [0u8; 32];
@@ -67,7 +67,7 @@ fn secure_kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
     if is_weak_key(&new_rk) || is_weak_key(&new_ck) {
         new_rk.zeroize();
         new_ck.zeroize();
-        return Err(XPushError::key_derivation_failed(
+        return Err(XLinkError::key_derivation_failed(
             "HKDF-RK",
             "Derived key is weak, retry key exchange",
             file!(),
@@ -81,7 +81,7 @@ fn secure_kdf_rk(rk: &Key, info: &[u8]) -> Result<(Key, Key)> {
 fn secure_kdf_ck(ck: &Key) -> Result<(Key, Key)> {
     // 验证输入密钥
     if is_weak_key(ck) {
-        return Err(XPushError::key_derivation_failed(
+        return Err(XLinkError::key_derivation_failed(
             "HKDF-CK",
             "Weak or invalid chain key detected",
             file!(),
@@ -92,7 +92,7 @@ fn secure_kdf_ck(ck: &Key) -> Result<(Key, Key)> {
     let mut okm = [0u8; 64];
 
     hk.expand(&[], &mut okm)
-        .map_err(|e| XPushError::key_derivation_failed("HKDF-CK", &e.to_string(), file!()))?;
+        .map_err(|e| XLinkError::key_derivation_failed("HKDF-CK", &e.to_string(), file!()))?;
 
     let mut next_ck = [0u8; 32];
     let mut msg_key = [0u8; 32];
@@ -106,7 +106,7 @@ fn secure_kdf_ck(ck: &Key) -> Result<(Key, Key)> {
     if is_weak_key(&next_ck) || is_weak_key(&msg_key) {
         next_ck.zeroize();
         msg_key.zeroize();
-        return Err(XPushError::key_derivation_failed(
+        return Err(XLinkError::key_derivation_failed(
             "HKDF-CK",
             "Derived message key is weak, retry key exchange",
             file!(),
@@ -146,7 +146,7 @@ impl SessionState {
     fn new(shared_secret: Key, peer_verifying_key: Option<VerifyingKey>) -> Result<Self> {
         // 验证共享密钥
         if is_weak_key(&shared_secret) {
-            return Err(XPushError::key_derivation_failed(
+            return Err(XLinkError::key_derivation_failed(
                 "X25519",
                 "Weak shared secret detected, possible key exchange failure",
                 file!(),
@@ -155,7 +155,7 @@ impl SessionState {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| XPushError::timeout("System time error", 0, file!()))?
+            .map_err(|_| XLinkError::timeout("System time error", 0, file!()))?
             .as_secs();
 
         let (root, chain) = secure_kdf_rk(&shared_secret, b"init")?;
@@ -270,14 +270,14 @@ impl CryptoEngine {
         for entry in self.sessions.iter() {
             let device_id = *entry.key();
             let session = entry.value().read().map_err(|_| {
-                XPushError::resource_exhausted(
+                XLinkError::resource_exhausted(
                     "Session read lock poisoned".to_string(),
                     0,
                     0,
                     file!(),
                 )
             })?;
-            let serialized = serde_json::to_vec(&*session).map_err(Into::<XPushError>::into)?;
+            let serialized = serde_json::to_vec(&*session).map_err(Into::<XLinkError>::into)?;
             session_data.push((device_id, serialized));
         }
 
@@ -296,7 +296,7 @@ impl CryptoEngine {
         let sessions = Arc::new(DashMap::new());
         for (device_id, serialized) in state.sessions {
             let session: SessionState =
-                serde_json::from_slice(&serialized).map_err(Into::<XPushError>::into)?;
+                serde_json::from_slice(&serialized).map_err(Into::<XLinkError>::into)?;
             sessions.insert(device_id, RwLock::new(session));
         }
 
@@ -342,9 +342,9 @@ impl CryptoEngine {
         let session_guard = self
             .sessions
             .get(peer_id)
-            .ok_or_else(|| XPushError::device_not_found(peer_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::device_not_found(peer_id.to_string(), file!()))?;
         let session = session_guard.read().map_err(|_| {
-            XPushError::resource_exhausted("Session read lock poisoned".to_string(), 0, 0, file!())
+            XLinkError::resource_exhausted("Session read lock poisoned".to_string(), 0, 0, file!())
         })?;
 
         // 检查会话是否已过期
@@ -352,7 +352,7 @@ impl CryptoEngine {
             drop(session);
             drop(session_guard);
             self.sessions.remove(peer_id);
-            return Err(XPushError::timeout(
+            return Err(XLinkError::timeout(
                 format!("Session expired for device {}", peer_id),
                 0,
                 file!(),
@@ -360,15 +360,15 @@ impl CryptoEngine {
         }
 
         let verifying_key = session.peer_verifying_key.ok_or_else(|| {
-            XPushError::invalid_input("verifying_key", "No verifying key for peer", file!())
+            XLinkError::invalid_input("verifying_key", "No verifying key for peer", file!())
         })?;
 
         let signature = Signature::from_slice(signature_bytes).map_err(|e| {
-            XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!())
+            XLinkError::signature_verification_failed("Ed25519", &e.to_string(), file!())
         })?;
 
         verifying_key.verify(data, &signature).map_err(|e| {
-            XPushError::signature_verification_failed("Ed25519", &e.to_string(), file!())
+            XLinkError::signature_verification_failed("Ed25519", &e.to_string(), file!())
         })
     }
 
@@ -376,9 +376,9 @@ impl CryptoEngine {
         let session_guard = self
             .sessions
             .get(peer_id)
-            .ok_or_else(|| XPushError::device_not_found(peer_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::device_not_found(peer_id.to_string(), file!()))?;
         let mut session = session_guard.write().map_err(|_| {
-            XPushError::resource_exhausted("Session write lock poisoned".to_string(), 0, 0, file!())
+            XLinkError::resource_exhausted("Session write lock poisoned".to_string(), 0, 0, file!())
         })?;
 
         // 检查会话是否已过期
@@ -386,7 +386,7 @@ impl CryptoEngine {
             drop(session);
             drop(session_guard);
             self.sessions.remove(peer_id);
-            return Err(XPushError::timeout(
+            return Err(XLinkError::timeout(
                 format!("Session expired for device {}", peer_id),
                 0,
                 file!(),
@@ -403,7 +403,7 @@ impl CryptoEngine {
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|e| {
-            XPushError::encryption_failed("ChaCha20Poly1305", &e.to_string(), file!())
+            XLinkError::encryption_failed("ChaCha20Poly1305", &e.to_string(), file!())
         })?;
 
         // 安全清理消息密钥
@@ -418,7 +418,7 @@ impl CryptoEngine {
 
     pub fn decrypt(&self, peer_id: &DeviceId, ciphertext_data: &[u8]) -> Result<Vec<u8>> {
         if ciphertext_data.len() < 12 {
-            return Err(XPushError::invalid_ciphertext(
+            return Err(XLinkError::invalid_ciphertext(
                 "Ciphertext too short (minimum 12 bytes for nonce)".to_string(),
                 file!(),
             ));
@@ -427,9 +427,9 @@ impl CryptoEngine {
         let session_guard = self
             .sessions
             .get(peer_id)
-            .ok_or_else(|| XPushError::device_not_found(peer_id.to_string(), file!()))?;
+            .ok_or_else(|| XLinkError::device_not_found(peer_id.to_string(), file!()))?;
         let mut session = session_guard.write().map_err(|_| {
-            XPushError::resource_exhausted("Session write lock poisoned".to_string(), 0, 0, file!())
+            XLinkError::resource_exhausted("Session write lock poisoned".to_string(), 0, 0, file!())
         })?;
 
         // 检查会话是否已过期
@@ -437,7 +437,7 @@ impl CryptoEngine {
             drop(session);
             drop(session_guard);
             self.sessions.remove(peer_id);
-            return Err(XPushError::timeout(
+            return Err(XLinkError::timeout(
                 format!("Session expired for device {}", peer_id),
                 0,
                 file!(),
@@ -453,7 +453,7 @@ impl CryptoEngine {
         let cipher = ChaCha20Poly1305::new((&msg_key).into());
 
         let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|e| {
-            XPushError::encryption_failed("ChaCha20Poly1305", &e.to_string(), file!())
+            XLinkError::encryption_failed("ChaCha20Poly1305", &e.to_string(), file!())
         })?;
 
         // 安全清理消息密钥

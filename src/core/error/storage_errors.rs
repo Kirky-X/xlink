@@ -1,8 +1,8 @@
 //! 存储相关错误 (07xx)
 
-use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XPushError};
+use crate::core::error::{ErrorCategory, ErrorCode, RetrySuggestion, XLinkError};
 
-impl XPushError {
+impl XLinkError {
     /// 存储初始化失败 (0701)
     ///
     /// 当存储模块初始化失败时返回此错误
