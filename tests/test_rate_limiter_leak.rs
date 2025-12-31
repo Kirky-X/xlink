@@ -28,7 +28,7 @@ fn test_rate_limiter_dashmap_leak() {
     let initial_memory = get_memory_usage();
     println!("Initial memory: {} KB", initial_memory);
 
-    // Simulate the rate_limiter usage pattern from UnifiedPushSDK
+    // Simulate the rate_limiter usage pattern from XLink
     let rate_limiter: Arc<DashMap<String, (Instant, u32)>> = Arc::new(DashMap::new());
 
     // Add entries like the SDK would - use larger dataset

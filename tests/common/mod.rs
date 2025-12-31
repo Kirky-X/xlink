@@ -17,7 +17,7 @@ use xlink::core::traits::{Channel as ChannelTrait, MessageHandler};
 use xlink::core::types::{
     ChannelType, DeviceCapabilities, DeviceId, DeviceType, Message, MessagePayload, NetworkType,
 };
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 
 // We need these imports for the TestSdkBuilder
 
@@ -165,7 +165,7 @@ impl TestSdkBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<UnifiedPushSDK> {
+    pub async fn build(self) -> Result<XLink> {
         let mut channels = self.channels;
 
         // Add a default MemoryChannel if no channels are provided
@@ -178,10 +178,9 @@ impl TestSdkBuilder {
         }
 
         let sdk = if let Some(storage_path) = self.storage_path {
-            UnifiedPushSDK::with_storage_path(self.device_capabilities, channels, storage_path)
-                .await?
+            XLink::with_storage_path(self.device_capabilities, channels, storage_path).await?
         } else {
-            UnifiedPushSDK::new(self.device_capabilities, channels).await?
+            XLink::new(self.device_capabilities, channels).await?
         };
 
         // Note: We would need to expose routing strategy setting in the actual SDK
@@ -357,7 +356,7 @@ impl NetworkSimulator {
 
         // Simulate packet loss
         if rand::random::<f64>() < self.packet_loss_rate {
-            return Err(xlink::core::error::XPushError::channel_disconnected(
+            return Err(xlink::core::error::XLinkError::channel_disconnected(
                 "Simulated packet loss".to_string(),
                 file!(),
             ));
@@ -379,7 +378,7 @@ impl NetworkSimulator {
         failure_rate: f64,
     ) -> Result<()> {
         if failure_rate > 0.0 && rand::random::<f64>() < failure_rate {
-            return Err(xlink::core::error::XPushError::channel_disconnected(
+            return Err(xlink::core::error::XLinkError::channel_disconnected(
                 "Simulated network failure".to_string(),
                 file!(),
             ));
@@ -393,7 +392,7 @@ impl NetworkSimulator {
 
 /// Set up a complete test environment with multiple devices
 pub struct TestEnvironment {
-    pub devices: Vec<Arc<UnifiedPushSDK>>,
+    pub devices: Vec<Arc<XLink>>,
     pub network_simulator: NetworkSimulator,
 }
 
@@ -415,7 +414,7 @@ impl TestEnvironment {
             let handler = Arc::new(NoOpMessageHandler);
             let channel =
                 Arc::new(MemoryChannel::new(handler, 10).with_type(ChannelType::BluetoothLE));
-            let sdk = UnifiedPushSDK::new(capabilities, vec![channel]).await?;
+            let sdk = XLink::new(capabilities, vec![channel]).await?;
             devices.push(Arc::new(sdk));
         }
 
@@ -432,11 +431,11 @@ impl TestEnvironment {
         Ok(())
     }
 
-    pub fn get_device(&self, index: usize) -> Option<Arc<UnifiedPushSDK>> {
+    pub fn get_device(&self, index: usize) -> Option<Arc<XLink>> {
         self.devices.get(index).cloned()
     }
 
-    pub fn find_device_by_id(&self, device_id: &DeviceId) -> Option<Arc<UnifiedPushSDK>> {
+    pub fn find_device_by_id(&self, device_id: &DeviceId) -> Option<Arc<XLink>> {
         self.devices
             .iter()
             .find(|device| device.device_id() == *device_id)
@@ -459,7 +458,7 @@ pub fn reset_test_state() {
 }
 
 /// Establish cryptographic sessions between devices for group communication
-pub async fn establish_device_sessions(devices: &[&xlink::UnifiedPushSDK]) -> Result<()> {
+pub async fn establish_device_sessions(devices: &[&xlink::XLink]) -> Result<()> {
     // Register each device's public key with every other device's group manager
     for i in 0..devices.len() {
         for j in 0..devices.len() {

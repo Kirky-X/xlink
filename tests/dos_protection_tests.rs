@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use xlink::core::types::{DeviceId, MessagePayload};
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 
 use crate::common::{test_device_id, NetworkSimulator, TestSdkBuilder};
 
@@ -17,7 +17,7 @@ mod common;
 
 /// 模拟DoS攻击：大量并发连接请求
 async fn simulate_dos_attack(
-    sdk: &Arc<UnifiedPushSDK>,
+    sdk: &Arc<XLink>,
     target_device: DeviceId,
     attack_duration: Duration,
     requests_per_second: u32,
@@ -78,7 +78,7 @@ async fn simulate_dos_attack(
 
 /// 测试速率限制机制
 async fn test_rate_limiting(
-    sdk: &Arc<UnifiedPushSDK>,
+    sdk: &Arc<XLink>,
     target_device: DeviceId,
     burst_requests: u32,
 ) -> Result<(u32, u32), Box<dyn std::error::Error + Send + Sync>> {

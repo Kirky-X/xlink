@@ -13,16 +13,14 @@ use tokio::time::{sleep, timeout};
 use xlink::channels::memory::MemoryChannel;
 use xlink::core::types::{DeviceId, MessagePayload};
 use xlink::storage::memory_store::MemoryStorage;
-use xlink::UnifiedPushSDK;
+use xlink::XLink;
 
 use crate::common::{test_device_id, NetworkSimulator, TestSdkBuilder};
 
 mod common;
 
 /// 创建使用内存存储的SDK实例（避免文件存储导致的内存泄漏）
-async fn create_memory_sdk(
-    device_id: DeviceId,
-) -> Result<UnifiedPushSDK, Box<dyn std::error::Error>> {
+async fn create_memory_sdk(device_id: DeviceId) -> Result<XLink, Box<dyn std::error::Error>> {
     use std::collections::HashSet;
     use xlink::core::traits::MessageHandler;
     use xlink::core::types::{DeviceCapabilities, DeviceType};
@@ -56,7 +54,7 @@ async fn create_memory_sdk(
     let storage = std::sync::Arc::new(MemoryStorage::new());
 
     // 使用新的 with_storage 方法创建SDK
-    let sdk = UnifiedPushSDK::with_storage(capabilities, vec![channel], storage).await?;
+    let sdk = XLink::with_storage(capabilities, vec![channel], storage).await?;
 
     Ok(sdk)
 }
@@ -75,7 +73,7 @@ async fn get_memory_usage() -> Result<u64, Box<dyn std::error::Error + Send + Sy
 
 /// 模拟长时间运行的消息传输任务
 async fn simulate_message_traffic(
-    sdk: Arc<UnifiedPushSDK>,
+    sdk: Arc<XLink>,
     device_id: DeviceId,
     message_count: Arc<AtomicU64>,
     running: Arc<AtomicBool>,

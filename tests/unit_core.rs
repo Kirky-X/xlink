@@ -181,9 +181,9 @@ fn test_error_category_code_range() {
 #[test]
 fn test_error_creation() {
     // 测试错误创建
-    use xlink::core::error::XPushError;
+    use xlink::core::error::XLinkError;
 
-    let error = XPushError::device_not_found("test-device", "test.rs");
+    let error = XLinkError::device_not_found("test-device", "test.rs");
     assert_eq!(error.code().0, 501);
     assert_eq!(error.message(), "设备未找到");
     assert_eq!(error.location(), "test.rs");
@@ -192,10 +192,10 @@ fn test_error_creation() {
 #[test]
 fn test_error_with_context() {
     // 测试错误上下文
-    use xlink::core::error::XPushError;
+    use xlink::core::error::XLinkError;
 
     let error =
-        XPushError::channel_disconnected("Connection lost", "test.rs").with_device_id("device-123");
+        XLinkError::channel_disconnected("Connection lost", "test.rs").with_device_id("device-123");
 
     assert_eq!(error.context.device_id, Some("device-123".to_string()));
     assert!(error.is_retryable());
@@ -204,10 +204,10 @@ fn test_error_with_context() {
 #[test]
 fn test_error_chain() {
     // 测试错误链
-    use xlink::core::error::XPushError;
+    use xlink::core::error::XLinkError;
 
-    let inner = XPushError::invalid_input("test", "Invalid value", "inner.rs");
-    let outer = XPushError::storage_write_failed("key", "Failed", "outer.rs").with_source(inner);
+    let inner = XLinkError::invalid_input("test", "Invalid value", "inner.rs");
+    let outer = XLinkError::storage_write_failed("key", "Failed", "outer.rs").with_source(inner);
 
     assert!(outer.source.is_some());
     assert_eq!(outer.source.as_ref().unwrap().message(), "输入参数无效");
