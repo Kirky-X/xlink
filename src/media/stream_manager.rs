@@ -398,7 +398,7 @@ impl StreamManager {
     ) -> Result<Option<Vec<u8>>> {
         let is_complete;
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
 
             // 获取或创建会话
             let session = sessions
@@ -427,7 +427,7 @@ impl StreamManager {
         if is_complete {
             let session_opt;
             {
-                let mut sessions = self.sessions.lock().unwrap();
+                let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
                 session_opt = sessions.remove(&stream_id);
             }
 
@@ -489,7 +489,7 @@ impl StreamManager {
                 );
 
                 // 根据网络类型调整所有活跃的码率控制器
-                let mut controllers = bitrate_controllers.lock().unwrap();
+                let mut controllers = bitrate_controllers.lock().expect("Failed to acquire bitrate_controllers lock");
                 for (_, controller) in controllers.iter_mut() {
                     // 重新初始化码率控制器以适应新的网络环境
                     *controller = BitrateController::new(new_network);
@@ -527,7 +527,7 @@ impl StreamManager {
         // 创建音频特定的流会话
         let stream_id = Uuid::new_v4();
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
             sessions.insert(
                 stream_id,
                 StreamSession {
@@ -672,7 +672,7 @@ impl StreamManager {
         // 创建视频特定的流会话
         let stream_id = Uuid::new_v4();
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
             sessions.insert(
                 stream_id,
                 StreamSession {
@@ -704,7 +704,7 @@ impl StreamManager {
         // 初始化视频码率控制器
         let bitrate_controller = BitrateController::new(NetworkType::Unknown);
         {
-            let mut controllers = self.bitrate_controllers.lock().unwrap();
+            let mut controllers = self.bitrate_controllers.lock().expect("Failed to acquire bitrate_controllers lock");
             controllers.insert(stream_id, bitrate_controller);
         }
 
@@ -769,7 +769,7 @@ impl StreamManager {
         let mut result_data = Vec::new();
 
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
             let session = sessions.entry(stream_id).or_insert(StreamSession {
                 total_chunks,
                 received_chunks: HashMap::new(),
@@ -828,7 +828,7 @@ impl StreamManager {
         frame_data: Vec<u8>,
         timestamp: u64,
     ) -> Result<()> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
         if let Some(session) = sessions.get_mut(&stream_id) {
             if session.stream_type == StreamType::Audio {
                 // 将音频帧添加到缓冲区
@@ -878,7 +878,7 @@ impl StreamManager {
         frame_type: FrameType,
         timestamp: u64,
     ) -> Result<()> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
         if let Some(session) = sessions.get_mut(&stream_id) {
             if session.stream_type == StreamType::Video {
                 // 将视频帧添加到缓冲区
@@ -939,7 +939,7 @@ impl StreamManager {
 
     // F8: 获取待处理的媒体帧
     pub fn get_pending_media_frames(&self, stream_id: Uuid) -> Vec<MediaFrame> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
         if let Some(session) = sessions.get_mut(&stream_id) {
             // 返回并清空优先级队列
             std::mem::take(&mut session.priority_queue)
@@ -955,7 +955,7 @@ impl StreamManager {
         rtt_ms: u32,
         packet_loss_rate: f32,
     ) -> Result<u32> {
-        let mut controllers = self.bitrate_controllers.lock().unwrap();
+        let mut controllers = self.bitrate_controllers.lock().expect("Failed to acquire bitrate_controllers lock");
         if let Some(controller) = controllers.get_mut(&stream_id) {
             controller.update_network_stats(rtt_ms, packet_loss_rate);
             let new_bitrate = controller.get_current_bitrate();
@@ -978,7 +978,7 @@ impl StreamManager {
 
     // F9: 获取流量统计信息
     pub fn get_traffic_statistics(&self) -> TrafficStatistics {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
         let mut total_sent = 0u64;
         let mut total_received = 0u64;
         let mut total_packets_sent = 0u64;
@@ -1015,7 +1015,7 @@ impl StreamManager {
             }
         }
 
-        let network_type = self.network_monitor.lock().unwrap().detect_network_type();
+        let network_type = self.network_monitor.lock().expect("Failed to acquire network_monitor lock").detect_network_type();
 
         TrafficStatistics {
             total_bytes_sent: total_sent,
@@ -1033,18 +1033,18 @@ impl StreamManager {
 
     // F9: 更新用户流量偏好设置
     pub fn update_user_preferences(&self, preferences: UserTrafficPreferences) {
-        *self.user_preferences.lock().unwrap() = preferences.clone();
+        *self.user_preferences.lock().expect("Failed to acquire user_preferences lock") = preferences.clone();
         log::info!("Updated user traffic preferences: {:?}", preferences);
     }
 
     // F9: 获取用户流量偏好设置
     pub fn get_user_preferences(&self) -> UserTrafficPreferences {
-        self.user_preferences.lock().unwrap().clone()
+        self.user_preferences.lock().expect("Failed to acquire user_preferences lock").clone()
     }
 
     // F9: 估算流量成本
     pub fn estimate_traffic_cost(&self, bytes: u64, network_type: NetworkType) -> f32 {
-        let preferences = self.user_preferences.lock().unwrap();
+        let preferences = self.user_preferences.lock().expect("Failed to acquire user_preferences lock");
         let mb = bytes as f32 / (1024.0 * 1024.0);
 
         match network_type {
@@ -1070,7 +1070,7 @@ impl StreamManager {
 
         // 2. 基于网络特征进行智能检测 (回退方案)
         let (total_rtt, total_loss, count) = {
-            let sessions = self.sessions.lock().unwrap();
+            let sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
             let mut total_rtt = 0u32;
             let mut total_loss = 0.0f32;
             let mut count = 0u32;
@@ -1124,7 +1124,7 @@ impl StreamManager {
 
     // 清理超时的会话
     pub fn cleanup_timeout_sessions(&self) {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1143,11 +1143,11 @@ impl StreamManager {
 
     /// 清理所有活动流，防止内存泄漏
     pub fn clear_streams(&self) {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().expect("Failed to acquire sessions lock");
         sessions.clear();
-        let mut controllers = self.controllers.lock().unwrap();
+        let mut controllers = self.controllers.lock().expect("Failed to acquire controllers lock");
         controllers.clear();
-        let mut bitrate_controllers = self.bitrate_controllers.lock().unwrap();
+        let mut bitrate_controllers = self.bitrate_controllers.lock().expect("Failed to acquire bitrate_controllers lock");
         bitrate_controllers.clear();
     }
 }

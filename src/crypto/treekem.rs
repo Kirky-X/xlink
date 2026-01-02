@@ -238,7 +238,7 @@ impl TreeKemEngine {
         let info = b"xLink_TreeKEM_KeyRotation_v1".to_vec();
         let hkdf = Hkdf::<Sha256>::new(Some(&group.group_secret), &new_secret);
         let mut okm = [0u8; 64];
-        hkdf.expand(&info, &mut okm).unwrap();
+        hkdf.expand(&info, &mut okm).expect("HKDF key expansion failed");
 
         group.group_secret.copy_from_slice(&okm[0..32]);
         group.epoch += 1;
@@ -306,7 +306,7 @@ impl TreeKemEngine {
         let info = b"xLink_TreeKEM_PathSecret";
         let hkdf = Hkdf::<Sha256>::new(None, &secret);
         let mut okm = [0u8; 64];
-        hkdf.expand(info, &mut okm).unwrap();
+        hkdf.expand(info, &mut okm).expect("HKDF path secret expansion failed");
 
         let path_secret = {
             let mut ps = [0u8; 32];
@@ -321,11 +321,11 @@ impl TreeKemEngine {
             if parent_id == 0 {
                 break;
             }
-            let secret = Self::derive_path_secret(path_secrets.last().unwrap(), parent_id);
+            let secret = Self::derive_path_secret(path_secrets.last().expect("Path secrets should not be empty"), parent_id);
             let info = b"xLink_TreeKEM_PathSecret";
             let hkdf = Hkdf::<Sha256>::new(None, &secret);
             let mut okm = [0u8; 64];
-            hkdf.expand(info, &mut okm).unwrap();
+            hkdf.expand(info, &mut okm).expect("HKDF path secret expansion failed");
 
             let parent_secret = {
                 let mut ps = [0u8; 32];
@@ -382,7 +382,7 @@ impl TreeKemEngine {
 
         let hkdf = Hkdf::<Sha256>::new(Some(secret), secret);
         let mut okm = [0u8; 32];
-        hkdf.expand(&info, &mut okm).unwrap();
+        hkdf.expand(&info, &mut okm).expect("HKDF key expansion failed");
         okm
     }
 

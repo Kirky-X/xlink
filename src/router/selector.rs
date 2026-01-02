@@ -5,8 +5,21 @@ use crate::core::types::{ChannelType, DeviceId, Message, MessagePayload};
 use crate::router::scoring::Scorer;
 use std::collections::HashMap;
 use std::sync::Arc;
-
 use std::sync::Mutex;
+
+/// 获取 Mutex 锁的便捷宏，提供更好的错误信息
+macro_rules! lock {
+    ($lock:expr, $field:expr) => {
+        $lock.lock().map_err(|_| {
+            XLinkError::resource_exhausted(
+                format!("Mutex poisoned: {}", $field),
+                0,
+                0,
+                file!(),
+            )
+        })
+    };
+}
 
 pub struct Router {
     channels: HashMap<ChannelType, Arc<dyn Channel>>,
@@ -40,58 +53,64 @@ impl Router {
     }
 
     /// 获取通道累计流量（字节）
-    pub fn get_traffic_stats(&self) -> HashMap<ChannelType, u64> {
-        self.traffic_stats.lock().unwrap().clone()
+    pub fn get_traffic_stats(&self) -> Result<HashMap<ChannelType, u64>> {
+        let stats = lock!(self.traffic_stats, "traffic_stats")?;
+        Ok(stats.clone())
     }
 
     /// 记录流量
     fn record_traffic(&self, ctype: ChannelType, bytes: u64) {
-        let mut stats = self.traffic_stats.lock().unwrap();
-        let current = stats.entry(ctype).or_insert(0);
-        *current += bytes;
+        if let Ok(mut stats) = lock!(self.traffic_stats, "traffic_stats") {
+            let current = stats.entry(ctype).or_insert(0);
+            *current += bytes;
 
-        // F10: 流量预警 - 检查是否超过阈值
-        if let Some(&threshold) = self.traffic_thresholds.get(&ctype) {
-            if *current >= threshold {
-                log::warn!(
-                    "Traffic threshold exceeded for channel {:?}: current={}, threshold={}",
-                    ctype,
-                    current,
-                    threshold
-                );
-                // 实际生产中这里可能会触发事件或回调
+            // F10: 流量预警 - 检查是否超过阈值
+            if let Some(&threshold) = self.traffic_thresholds.get(&ctype) {
+                if *current >= threshold {
+                    log::warn!(
+                        "Traffic threshold exceeded for channel {:?}: current={}, threshold={}",
+                        ctype,
+                        current,
+                        threshold
+                    );
+                    // 实际生产中这里可能会触发事件或回调
+                }
             }
         }
+        // 锁中毒时静默忽略，避免影响主流程
     }
 
     /// 记录路由历史
     fn record_history(&self, target: DeviceId, ctype: ChannelType) {
-        let mut history = self.route_history.lock().unwrap();
-        let entries = history.entry(target).or_default();
-        entries.push(ctype);
-        if entries.len() > 10 {
-            entries.remove(0);
+        if let Ok(mut history) = lock!(self.route_history, "route_history") {
+            let entries = history.entry(target).or_default();
+            entries.push(ctype);
+            if entries.len() > 10 {
+                entries.remove(0);
+            }
         }
     }
 
     /// 基于历史预测最佳通道
     fn predict_best_channel(&self, target: &DeviceId) -> Option<ChannelType> {
-        let history = self.route_history.lock().unwrap();
-        let entries = history.get(target)?;
-        if entries.is_empty() {
-            return None;
-        }
+        if let Ok(history) = lock!(self.route_history, "route_history") {
+            let entries = history.get(target)?;
+            if entries.is_empty() {
+                return None;
+            }
 
-        // 简单的频率统计预测
-        let mut counts = HashMap::new();
-        for &ctype in entries {
-            *counts.entry(ctype).or_insert(0) += 1;
-        }
+            // 简单的频率统计预测
+            let mut counts = HashMap::new();
+            for &ctype in entries {
+                *counts.entry(ctype).or_insert(0) += 1;
+            }
 
-        counts
-            .into_iter()
-            .max_by_key(|&(_, count)| count)
-            .map(|(ctype, _)| ctype)
+            return counts
+                .into_iter()
+                .max_by_key(|&(_, count)| count)
+                .map(|(ctype, _)| ctype);
+        }
+        None
     }
 
     pub async fn select_channel(&self, message: &Message) -> Result<Arc<dyn Channel>> {
@@ -164,18 +183,26 @@ impl Router {
     /// 清理路由器中的数据，防止内存泄漏
     pub async fn clear_channels(&self) {
         // 清理流量统计
-        self.traffic_stats.lock().unwrap().clear();
+        if let Ok(mut stats) = lock!(self.traffic_stats, "traffic_stats") {
+            stats.clear();
+        }
         // 清理路由历史
-        self.route_history.lock().unwrap().clear();
+        if let Ok(mut history) = lock!(self.route_history, "route_history") {
+            history.clear();
+        }
         log::debug!("Router: Cleared traffic stats and route history");
     }
 
     /// 同步清理路由器中的数据，防止内存泄漏（用于Drop）
     pub fn clear_channels_sync(&self) {
         // 清理流量统计
-        self.traffic_stats.lock().unwrap().clear();
+        if let Ok(mut stats) = lock!(self.traffic_stats, "traffic_stats") {
+            stats.clear();
+        }
         // 清理路由历史
-        self.route_history.lock().unwrap().clear();
+        if let Ok(mut history) = lock!(self.route_history, "route_history") {
+            history.clear();
+        }
         // 清理通道映射（需要获取可变引用，这在Drop中不可行，所以暂时跳过）
         // self.channels.clear(); // 无法在Drop中调用，因为需要&mut self
         log::debug!("Router: Synchronously cleared traffic stats and route history");
