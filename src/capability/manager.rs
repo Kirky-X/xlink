@@ -55,7 +55,7 @@ impl CapabilityManager {
     }
 
     pub fn get_local_caps(&self) -> DeviceCapabilities {
-        self.local_capabilities.read().unwrap().clone()
+        self.local_capabilities.read().expect("Failed to acquire read lock for local_capabilities").clone()
     }
 
     pub fn update_channel_state(
@@ -173,13 +173,13 @@ impl CapabilityManager {
     /// 更新本地设备能力并通知变化
     pub fn update_local_capabilities(&self, new_capabilities: DeviceCapabilities) {
         // 获取当前能力
-        let current_capabilities = self.local_capabilities.read().unwrap().clone();
+        let current_capabilities = self.local_capabilities.read().expect("Failed to acquire read lock for local_capabilities").clone();
 
         // 检查能力变化
         let changes = self.detect_capability_changes(&current_capabilities, &new_capabilities);
 
         // 更新本地能力
-        *self.local_capabilities.write().unwrap() = new_capabilities.clone();
+        *self.local_capabilities.write().expect("Failed to acquire write lock for local_capabilities") = new_capabilities.clone();
 
         // 通知所有变化
         for change in changes {
