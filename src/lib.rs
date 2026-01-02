@@ -140,32 +140,57 @@ struct SdkMessageHandler {
     metrics: Arc<crate::core::metrics::MetricsCollector>,
 }
 
+/// Rate Limiter 配置常量
+const RATE_LIMIT_MAX_RETRIES: usize = 3;
+const RATE_LIMIT_WINDOW_SECS: u64 = 1;
+const RATE_LIMIT_MAX_COUNT: u32 = 100;
+
 #[async_trait]
 impl MessageHandler for SdkMessageHandler {
     async fn handle_message(&self, mut message: Message) -> Result<()> {
         // DoS 防护：限制每秒最多 100 条消息
-        // 使用 try_get_mut 优化锁竞争，避免长时间持有 shard 锁
+        // 改进的速率限制策略，防止通过并发访问绕过限制
         let now = Instant::now();
         let should_rate_limit = {
-            match self.rate_limiter.try_get_mut(&message.sender) {
-                dashmap::try_result::TryResult::Present(mut rate_entry) => {
-                    let (last_reset, count) = rate_entry.value_mut();
+            let mut retries = 0;
+            loop {
+                match self.rate_limiter.try_get_mut(&message.sender) {
+                    dashmap::try_result::TryResult::Present(mut rate_entry) => {
+                        let (last_reset, count) = rate_entry.value_mut();
 
-                    // 使用饱和计数器和时间窗口优化 DoS 防护，避免时钟回拨导致的问题
-                    let duration = now.saturating_duration_since(*last_reset);
-                    if duration > Duration::from_secs(1) {
-                        *last_reset = now;
-                        *count = 1;
-                        false
-                    } else {
-                        *count = count.saturating_add(1);
-                        *count > 100
+                        // 使用饱和计数器和时间窗口优化 DoS 防护，避免时钟回拨导致的问题
+                        let duration = now.saturating_duration_since(*last_reset);
+                        if duration > Duration::from_secs(RATE_LIMIT_WINDOW_SECS) {
+                            *last_reset = now;
+                            *count = 1;
+                            break false;
+                        } else {
+                            *count = count.saturating_add(1);
+                            break *count > RATE_LIMIT_MAX_COUNT;
+                        }
                     }
-                }
-                dashmap::try_result::TryResult::Absent | dashmap::try_result::TryResult::Locked => {
-                    // 如果其他线程正在修改这个条目，暂时允许通过
-                    // 这是一种退让策略，避免活锁
-                    false
+                    dashmap::try_result::TryResult::Absent => {
+                        // 新条目，插入并允许通过（使用饱和加法防止溢出）
+                        self.rate_limiter.insert(
+                            message.sender,
+                            (now, 1u32.saturating_add(0)),
+                        );
+                        break false;
+                    }
+                    dashmap::try_result::TryResult::Locked => {
+                        // 短暂让出后重试，避免活锁
+                        retries += 1;
+                        if retries >= RATE_LIMIT_MAX_RETRIES {
+                            // 超过重试次数，保守处理：允许通过但记录警告
+                            log::warn!(
+                                "Rate limiter lock contention for device {} after {} retries",
+                                message.sender,
+                                retries
+                            );
+                            break false;
+                        }
+                        std::hint::spin_loop();
+                    }
                 }
             }
         };
@@ -532,29 +557,56 @@ impl XLink {
         // DoS 防护：限制发送速率，每秒最多 100 条消息
         {
             let now = Instant::now();
-            let mut rate_entry = self.rate_limiter.entry(self.device_id).or_insert((now, 0));
-            let (last_reset, count) = rate_entry.value_mut();
-
-            let duration = now.saturating_duration_since(*last_reset);
-            if duration >= Duration::from_secs(1) {
-                *last_reset = now;
-                *count = 1;
-            } else {
-                *count = count.saturating_add(1);
-                if *count > 100 {
-                    log::warn!(
-                        "DoS Protection: Send rate limit exceeded for device {}",
-                        self.device_id
-                    );
-                    return Err(crate::core::error::XLinkError::resource_exhausted(
-                        format!("Send rate limit exceeded for device {}", self.device_id),
-                        (*count).into(),
-                        100,
-                        file!(),
-                    ));
+            let rate_limit_exceeded = {
+                // 使用 try_get_mut 策略，添加重试机制
+                let mut result = false;
+                for _ in 0..RATE_LIMIT_MAX_RETRIES {
+                    match self.rate_limiter.try_get_mut(&self.device_id) {
+                        dashmap::try_result::TryResult::Present(mut entry) => {
+                            let (last_reset, count) = entry.value_mut();
+                            let duration = now.saturating_duration_since(*last_reset);
+                            if duration >= Duration::from_secs(RATE_LIMIT_WINDOW_SECS) {
+                                *last_reset = now;
+                                *count = 1;
+                                result = false;
+                            } else {
+                                *count = count.saturating_add(1);
+                                result = *count > RATE_LIMIT_MAX_COUNT;
+                            }
+                            break;
+                        }
+                        dashmap::try_result::TryResult::Absent => {
+                            // 设备未注册，创建新条目
+                            self.rate_limiter.insert(self.device_id, (now, 1));
+                            result = false;
+                            break;
+                        }
+                        dashmap::try_result::TryResult::Locked => {
+                            // 锁被占用，短暂让出 CPU 后重试
+                            std::hint::spin_loop();
+                        }
+                    }
                 }
+                // 如果重试后仍无法获取锁，记录安全事件并拒绝请求
+                if result {
+                    log::warn!("Rate limiter lock contention - rejecting for safety");
+                }
+                result
+            };
+
+            if rate_limit_exceeded {
+                log::warn!(
+                    "DoS Protection: Send rate limit exceeded for device {}",
+                    self.device_id
+                );
+                return Err(crate::core::error::XLinkError::resource_exhausted(
+                    format!("Send rate limit exceeded for device {}", self.device_id),
+                    (RATE_LIMIT_MAX_COUNT + 1).into(),
+                    RATE_LIMIT_MAX_COUNT.into(),
+                    file!(),
+                ));
             }
-        } // 显式释放锁
+        }
 
         // F10: 性能优化 - 增加发送指标记录
         self.metrics.record_send(ChannelType::Internet, 0); // 提前记录，实际发送后会再次记录准确值

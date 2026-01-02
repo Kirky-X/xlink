@@ -25,6 +25,7 @@ sha2 = "0.10"
 hmac = "0.12"
 hkdf = "0.12"
 zeroize = { version = "1.7", features = ["derive"] }
+parking_lot = "0.12"  # 更高效的互斥锁实现，避免死锁风险
 dashmap = "5.5"
 log = "0.4"
 env_logger = "0.10"

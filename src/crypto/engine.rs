@@ -5,11 +5,12 @@ use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use dashmap::DashMap;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
+use parking_lot::Mutex;
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
 
@@ -234,7 +235,9 @@ pub struct CryptoEngine {
     static_secret: StaticSecret,
     public_key: PublicKey,
     signing_key: SigningKey,
-    sessions: Arc<DashMap<DeviceId, RwLock<SessionState>>>,
+    /// 使用 Mutex 替代 RwLock 避免嵌套锁死锁风险
+    /// 访问模式：先通过 DashMap 获取条目，再获取 Mutex 锁
+    sessions: Arc<DashMap<DeviceId, Mutex<SessionState>>>,
 }
 
 impl Default for CryptoEngine {
@@ -269,14 +272,8 @@ impl CryptoEngine {
         let mut session_data = Vec::new();
         for entry in self.sessions.iter() {
             let device_id = *entry.key();
-            let session = entry.value().read().map_err(|_| {
-                XLinkError::resource_exhausted(
-                    "Session read lock poisoned".to_string(),
-                    0,
-                    0,
-                    file!(),
-                )
-            })?;
+            // 使用 Mutex 锁代替 RwLock read()，避免死锁风险
+            let session = entry.value().lock();
             let serialized = serde_json::to_vec(&*session).map_err(Into::<XLinkError>::into)?;
             session_data.push((device_id, serialized));
         }
@@ -297,7 +294,8 @@ impl CryptoEngine {
         for (device_id, serialized) in state.sessions {
             let session: SessionState =
                 serde_json::from_slice(&serialized).map_err(Into::<XLinkError>::into)?;
-            sessions.insert(device_id, RwLock::new(session));
+            // 使用 Mutex 替代 RwLock
+            sessions.insert(device_id, Mutex::new(session));
         }
 
         Ok(Self {
@@ -318,7 +316,8 @@ impl CryptoEngine {
     pub fn establish_session(&self, peer_id: DeviceId, peer_public: PublicKey) -> Result<()> {
         let shared_secret = self.static_secret.diffie_hellman(&peer_public);
         let session = SessionState::new(*shared_secret.as_bytes(), None)?;
-        self.sessions.insert(peer_id, RwLock::new(session));
+        // 使用 Mutex 替代 RwLock
+        self.sessions.insert(peer_id, Mutex::new(session));
         Ok(())
     }
 
@@ -330,7 +329,8 @@ impl CryptoEngine {
     ) -> Result<()> {
         let shared_secret = self.static_secret.diffie_hellman(&peer_public);
         let session = SessionState::new(*shared_secret.as_bytes(), Some(peer_verifying_key))?;
-        self.sessions.insert(peer_id, RwLock::new(session));
+        // 使用 Mutex 替代 RwLock
+        self.sessions.insert(peer_id, Mutex::new(session));
         Ok(())
     }
 
@@ -343,9 +343,8 @@ impl CryptoEngine {
             .sessions
             .get(peer_id)
             .ok_or_else(|| XLinkError::device_not_found(peer_id.to_string(), file!()))?;
-        let session = session_guard.read().map_err(|_| {
-            XLinkError::resource_exhausted("Session read lock poisoned".to_string(), 0, 0, file!())
-        })?;
+        // 使用 Mutex 锁代替 RwLock read()，避免死锁风险
+        let session = session_guard.lock();
 
         // 检查会话是否已过期
         if session.is_expired() {
@@ -377,9 +376,8 @@ impl CryptoEngine {
             .sessions
             .get(peer_id)
             .ok_or_else(|| XLinkError::device_not_found(peer_id.to_string(), file!()))?;
-        let mut session = session_guard.write().map_err(|_| {
-            XLinkError::resource_exhausted("Session write lock poisoned".to_string(), 0, 0, file!())
-        })?;
+        // 使用 Mutex 锁代替 RwLock write()，避免死锁风险
+        let mut session = session_guard.lock();
 
         // 检查会话是否已过期
         if session.is_expired() {
@@ -428,9 +426,8 @@ impl CryptoEngine {
             .sessions
             .get(peer_id)
             .ok_or_else(|| XLinkError::device_not_found(peer_id.to_string(), file!()))?;
-        let mut session = session_guard.write().map_err(|_| {
-            XLinkError::resource_exhausted("Session write lock poisoned".to_string(), 0, 0, file!())
-        })?;
+        // 使用 Mutex 锁代替 RwLock write()，避免死锁风险
+        let mut session = session_guard.lock();
 
         // 检查会话是否已过期
         if session.is_expired() {
