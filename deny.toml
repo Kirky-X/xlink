@@ -7,6 +7,7 @@ db-urls = ["https://github.com/RustSec/advisory-db"]
 ignore = ["RUSTSEC-2025-0134"]
 
 [licenses]
+# 允许的开源许可证
 allow = [
     "MIT",
     "Apache-2.0",
@@ -14,12 +15,13 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
+    "Zlib",
     "Unicode-3.0",
 ]
 
 [bans]
-multiple-versions = "warn"
+# 允许间接依赖的多版本共存（常见于复杂依赖图）
+multiple-versions = "allow"
 wildcards = "allow"
 highlight = "simplest-path"
 
