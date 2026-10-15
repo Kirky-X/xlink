@@ -165,7 +165,7 @@ jobs:
           cat changelog.md
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@5113cdc90fd4d541c801c55356214017bf5ae34b # v3（SHA 钉版）
         with:
           files: release-assets/*
           body_path: changelog.md
