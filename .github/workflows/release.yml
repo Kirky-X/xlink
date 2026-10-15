@@ -12,6 +12,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: xlink-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # 更新版本号并提交
   update-version:
@@ -169,6 +173,18 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify release uniqueness (idempotency guard)
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq "[.[] | select(.tag_name == \"${TAG}\")] | length")
+          echo "release objects for ${TAG}: ${COUNT}"
+          if [ "${COUNT}" != "1" ]; then
+            echo "::error::expected exactly 1 release for ${TAG}, found ${COUNT}; release state is not idempotent"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # 发布到 crates.io（使用 Trusted Publishing）
   publish-crates:
